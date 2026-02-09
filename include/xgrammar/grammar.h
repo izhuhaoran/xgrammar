@@ -133,7 +133,9 @@ class Grammar {
    * \param structural_tag_json The structural tag string.
    */
   static std::variant<Grammar, StructuralTagError> FromStructuralTag(
-      const std::string& structural_tag_json
+      const std::string& structural_tag_json,
+      bool any_whitespace = true,
+      std::optional<int> max_whitespace_cnt = std::nullopt
   );
 
   /*!

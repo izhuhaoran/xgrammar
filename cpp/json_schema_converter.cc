@@ -3486,7 +3486,9 @@ std::string GenerateFloatRangeRegex(std::optional<double> start, std::optional<d
   return JSONSchemaConverter::GenerateFloatRangeRegex(start, end, 6);
 }
 
-std::string QwenXMLToolCallingToEBNF(const std::string& schema) {
+std::string QwenXMLToolCallingToEBNF(
+    const std::string& schema, bool any_whitespace, std::optional<int> max_whitespace_cnt
+) {
   // Convert the schema string to picojson value.
   picojson::value json_value;
   std::string err = picojson::parse(json_value, schema);
@@ -3505,8 +3507,18 @@ std::string QwenXMLToolCallingToEBNF(const std::string& schema) {
     XGRAMMAR_LOG(FATAL) << "Function calling must have a 'type' field of 'object': "
                         << json_value.to_str();
   }
+  XGRAMMAR_LOG(INFO) << "Converting JSON schema to EBNF for Qwen XML tool calling. any_whitespace="
+                     << any_whitespace << ", max_whitespace_cnt="
+                     << (max_whitespace_cnt.has_value() ? std::to_string(*max_whitespace_cnt)
+                                                        : "nullopt");
   return JSONSchemaToEBNF(
-      json_value, true, std::nullopt, std::nullopt, true, std::nullopt, JSONFormat::kXML
+      json_value,
+      any_whitespace,
+      std::nullopt,
+      std::nullopt,
+      true,
+      max_whitespace_cnt,
+      JSONFormat::kXML
   );
 }
 

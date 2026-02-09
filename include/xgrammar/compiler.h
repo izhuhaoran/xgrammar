@@ -93,7 +93,11 @@ class GrammarCompiler {
   );
 
   /*! \brief Get the compiled grammar for a structural tag. */
-  CompiledGrammar CompileStructuralTag(const std::string& structural_tag_json);
+  CompiledGrammar CompileStructuralTag(
+      const std::string& structural_tag_json,
+      bool any_whitespace = true,
+      std::optional<int> max_whitespace_cnt = std::nullopt
+  );
 
   /*! \brief Get the compiled grammar for a regex. */
   CompiledGrammar CompileRegex(const std::string& regex);

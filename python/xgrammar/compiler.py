@@ -232,7 +232,9 @@ class GrammarCompiler(XGRObject):
         self, tags: List[StructuralTagItem], triggers: List[str]
     ) -> CompiledGrammar: ...
 
-    def compile_structural_tag(self, *args, **kwargs) -> CompiledGrammar:
+    def compile_structural_tag(
+        self, *args, any_whitespace: bool = True, max_whitespace_cnt: Optional[int] = None, **kwargs
+    ) -> CompiledGrammar:
         """Compile a grammar from a structural tag. See the Structural Tag Usage in XGrammar
         documentation for its usage.
 
@@ -248,6 +250,12 @@ class GrammarCompiler(XGRObject):
         ----------
         structural_tag : Union[StructuralTag, str, Dict[str, Any]]
             The structural tag either as a StructuralTag object, or a JSON string or a dictionary.
+
+        any_whitespace : bool, default: True
+            Whether to allow any whitespace in XML-style tool calling conversion.
+
+        max_whitespace_cnt : Optional[int], default: None
+            Maximum number of whitespace characters allowed between XML elements.
 
         tags : List[StructuralTagItem]
             (Deprecated) The structural tags. Use StructuralTag class instead.
@@ -276,7 +284,9 @@ class GrammarCompiler(XGRObject):
         """
         structural_tag_str = _get_structural_tag_str_from_args(args, kwargs)
         return CompiledGrammar._create_from_handle(
-            self._handle.compile_structural_tag(structural_tag_str)
+            self._handle.compile_structural_tag(
+                structural_tag_str, any_whitespace, max_whitespace_cnt
+            )
         )
 
     @overload

@@ -751,7 +751,11 @@ std::optional<ISTError> StructuralTagAnalyzer::VisitSub(TagsWithSeparatorFormat*
 
 class StructuralTagGrammarConverter {
  public:
-  static Result<Grammar, ISTError> Convert(const StructuralTag& structural_tag);
+  static Result<Grammar, ISTError> Convert(
+      const StructuralTag& structural_tag,
+      bool any_whitespace,
+      std::optional<int> max_whitespace_cnt
+  );
 
  private:
   /*!
@@ -775,7 +779,12 @@ class StructuralTagGrammarConverter {
 
   bool IsPrefix(const std::string& prefix, const std::string& full_str);
 
+  StructuralTagGrammarConverter(bool any_whitespace, std::optional<int> max_whitespace_cnt)
+      : any_whitespace_(any_whitespace), max_whitespace_cnt_(max_whitespace_cnt) {}
+
   GrammarBuilder grammar_builder_;
+  bool any_whitespace_;
+  std::optional<int> max_whitespace_cnt_;
 };
 
 bool StructuralTagGrammarConverter::IsPrefix(
@@ -785,9 +794,10 @@ bool StructuralTagGrammarConverter::IsPrefix(
          std::string_view(full_str).substr(0, prefix.size()) == prefix;
 }
 
-Result<Grammar, ISTError> StructuralTagGrammarConverter::Convert(const StructuralTag& structural_tag
+Result<Grammar, ISTError> StructuralTagGrammarConverter::Convert(
+    const StructuralTag& structural_tag, bool any_whitespace, std::optional<int> max_whitespace_cnt
 ) {
-  auto converter = StructuralTagGrammarConverter();
+  StructuralTagGrammarConverter converter(any_whitespace, max_whitespace_cnt);
   auto result = converter.Visit(structural_tag.format);
   if (result.IsErr()) {
     return ResultErr(std::move(result).UnwrapErr());
@@ -824,7 +834,9 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const JSONSchemaFo
 
 Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const QwenXmlParameterFormat& format
 ) {
-  auto sub_grammar = Grammar::FromEBNF(QwenXMLToolCallingToEBNF(format.xml_schema));
+  auto sub_grammar = Grammar::FromEBNF(
+      QwenXMLToolCallingToEBNF(format.xml_schema, any_whitespace_, max_whitespace_cnt_)
+  );
   auto added_root_rule_id = SubGrammarAdder().Apply(&grammar_builder_, sub_grammar);
   return ResultOk(added_root_rule_id);
 }
@@ -1305,7 +1317,11 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const TagsWithSepa
 
 /************** StructuralTag Conversion Public API **************/
 
-Result<Grammar, StructuralTagError> StructuralTagToGrammar(const std::string& structural_tag_json) {
+Result<Grammar, StructuralTagError> StructuralTagToGrammar(
+    const std::string& structural_tag_json,
+    bool any_whitespace,
+    std::optional<int> max_whitespace_cnt
+) {
   auto structural_tag_result = StructuralTagParser::FromJSON(structural_tag_json);
   if (structural_tag_result.IsErr()) {
     return ResultErr(std::move(structural_tag_result).UnwrapErr());
@@ -1315,7 +1331,8 @@ Result<Grammar, StructuralTagError> StructuralTagToGrammar(const std::string& st
   if (err.has_value()) {
     return ResultErr(std::move(err).value());
   }
-  auto result = StructuralTagGrammarConverter().Convert(structural_tag);
+  auto result =
+      StructuralTagGrammarConverter::Convert(structural_tag, any_whitespace, max_whitespace_cnt);
   if (result.IsErr()) {
     return ResultErr(std::move(result).UnwrapErr());
   }

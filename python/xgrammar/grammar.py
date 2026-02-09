@@ -297,7 +297,9 @@ class Grammar(XGRObject):
     def from_structural_tag(tags: List[StructuralTagItem], triggers: List[str]) -> "Grammar": ...
 
     @staticmethod
-    def from_structural_tag(*args, **kwargs) -> "Grammar":
+    def from_structural_tag(
+        *args, any_whitespace: bool = True, max_whitespace_cnt: Optional[int] = None, **kwargs
+    ) -> "Grammar":
         """Create a grammar from a structural tag. See the Structural Tag Usage in XGrammar
         documentation for its usage.
 
@@ -313,6 +315,12 @@ class Grammar(XGRObject):
         ----------
         structural_tag : Union[StructuralTag, str, Dict[str, Any]]
             The structural tag either as a StructuralTag object, or a JSON string or a dictionary.
+
+        any_whitespace : bool, default: True
+            Whether to allow any whitespace in XML-style tool calling conversion.
+
+        max_whitespace_cnt : Optional[int], default: None
+            Maximum number of whitespace characters allowed between XML elements.
 
         tags : List[StructuralTagItem]
             (Deprecated) The structural tags. Use StructuralTag class instead.
@@ -347,7 +355,11 @@ class Grammar(XGRObject):
         Structural Tag in XGrammar documentation for its semantic.
         """
         structural_tag_str = _get_structural_tag_str_from_args(args, kwargs)
-        return Grammar._create_from_handle(_core.Grammar.from_structural_tag(structural_tag_str))
+        return Grammar._create_from_handle(
+            _core.Grammar.from_structural_tag(
+                structural_tag_str, any_whitespace, max_whitespace_cnt
+            )
+        )
 
     @staticmethod
     def builtin_json_grammar() -> "Grammar":

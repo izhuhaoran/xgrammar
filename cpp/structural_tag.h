@@ -195,7 +195,11 @@ struct StructuralTag {
  * \param structural_tag_json The JSON string of the structural tag.
  * \return A grammar if the JSON is valid, otherwise an error message in std::string.
  */
-Result<Grammar, StructuralTagError> StructuralTagToGrammar(const std::string& structural_tag_json);
+Result<Grammar, StructuralTagError> StructuralTagToGrammar(
+    const std::string& structural_tag_json,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 }  // namespace xgrammar
 

@@ -107,7 +107,11 @@ std::string GenerateFloatRangeRegex(std::optional<double> start, std::optional<d
  * \return The ebnf-grammar to match the requirements of the schema, and
  * in Qwen xml style.
  */
-std::string QwenXMLToolCallingToEBNF(const std::string& schema);
+std::string QwenXMLToolCallingToEBNF(
+    const std::string& schema,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 }  // namespace xgrammar
 

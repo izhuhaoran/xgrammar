@@ -66,9 +66,12 @@ Grammar Grammar::FromRegex(const std::string& regex, bool print_converted_ebnf) 
 }
 
 std::variant<Grammar, StructuralTagError> Grammar::FromStructuralTag(
-    const std::string& structural_tag_json
+    const std::string& structural_tag_json,
+    bool any_whitespace,
+    std::optional<int> max_whitespace_cnt
 ) {
-  return StructuralTagToGrammar(structural_tag_json).ToVariant();
+  return StructuralTagToGrammar(structural_tag_json, any_whitespace, max_whitespace_cnt)
+      .ToVariant();
 }
 
 // Optimized json grammar for the speed of the grammar matcher

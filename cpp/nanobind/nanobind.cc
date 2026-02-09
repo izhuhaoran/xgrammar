@@ -201,6 +201,9 @@ NB_MODULE(xgrammar_bindings, m) {
       .def_static(
           "from_structural_tag",
           &Grammar_FromStructuralTag,
+          nb::arg("structural_tag_json"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none(),
           nb::call_guard<nb::gil_scoped_release>()
       )
       .def_static("builtin_json_grammar", &Grammar::BuiltinJSONGrammar)
@@ -237,7 +240,10 @@ NB_MODULE(xgrammar_bindings, m) {
       .def(
           "compile_structural_tag",
           &GrammarCompiler::CompileStructuralTag,
-          nb::call_guard<nb::gil_scoped_release>()
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("structural_tag_json"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none()
       )
       .def(
           "compile_regex", &GrammarCompiler::CompileRegex, nb::call_guard<nb::gil_scoped_release>()
@@ -358,7 +364,13 @@ NB_MODULE(xgrammar_bindings, m) {
           nb::arg("start").none(),
           nb::arg("end").none()
       )
-      .def("_qwen_xml_tool_calling_to_ebnf", &QwenXMLToolCallingToEBNF, nb::arg("schema"))
+      .def(
+          "_qwen_xml_tool_calling_to_ebnf",
+          &QwenXMLToolCallingToEBNF,
+          nb::arg("schema"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none()
+      )
       .def(
           "_generate_float_regex",
           [](std::optional<double> start, std::optional<double> end) {

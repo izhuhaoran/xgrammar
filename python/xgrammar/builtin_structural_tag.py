@@ -16,8 +16,15 @@ from .structural_tag import (
 
 
 BuiltinSupportedModels = Literal[
-    "llama", "qwen", "qwen_coder", "kimi", "deepseek_r1", "harmony", "deepseek_v3_2", "minimax",
-    "glm47"
+    "llama",
+    "qwen",
+    "qwen_coder",
+    "kimi",
+    "deepseek_r1",
+    "harmony",
+    "deepseek_v3_2",
+    "minimax",
+    "glm47",
 ]
 
 
@@ -27,6 +34,7 @@ def get_builtin_structural_tag(
     tools: List[Dict[str, Any]] = [],
     builtin_tools: List[Dict[str, Any]] = [],
     force_empty_reasoning: bool = False,
+    force_ignore_reasoning: bool = False,
 ) -> StructuralTag:
     r"""Get structural tag for model. This function can generate structural tag for the given model
     with the given tools, builtin tools and reasoning mode.
@@ -50,6 +58,10 @@ def get_builtin_structural_tag(
         the empty thinking content at the beginning of the response.
         Some models like Qwen3, DeepSeek-R1 and etc. prefer empty-thinking mode to disable
         reasoning mode instead of non-thinking mode.
+    force_ignore_reasoning : bool
+        Whether to ignore reasoning constraints. i.e. The grammar will not constrain the
+        thinking content at the beginning of the response. Only constraints the output of the
+        tool calls.
 
 
     Returns
@@ -70,6 +82,7 @@ def get_builtin_structural_tag(
         "builtin_tools": builtin_tools,
         "reasoning": reasoning,
         "force_empty_reasoning": force_empty_reasoning,
+        "force_ignore_reasoning": force_ignore_reasoning,
     }
     return func(input_dict)
 
@@ -229,6 +242,8 @@ def _get_llama_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -247,13 +262,11 @@ def _get_llama_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         )
 
     if len(tags) > 0:
-        suffix_tag = TriggeredTagsFormat(
-            triggers=['{"name": '], tags=tags, excludes=_THINK_EXCLUDE_TOKENS
-        )
+        suffix_tag = TriggeredTagsFormat(triggers=['{"name": '], tags=tags, excludes=excludes)
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -282,6 +295,8 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -301,12 +316,12 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
 
     if len(tags) > 0:
         suffix_tag = TriggeredTagsFormat(
-            triggers=["<|tool_call_begin|>"], tags=tags, excludes=_THINK_EXCLUDE_TOKENS
+            triggers=["<|tool_call_begin|>"], tags=tags, excludes=excludes
         )
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -338,6 +353,8 @@ def _get_deepseek_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -357,14 +374,12 @@ def _get_deepseek_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
 
     if len(tags) > 0:
         suffix_tag = TriggeredTagsFormat(
-            triggers=["<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>"],
-            tags=tags,
-            excludes=_THINK_EXCLUDE_TOKENS,
+            triggers=["<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>"], tags=tags, excludes=excludes
         )
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -393,6 +408,8 @@ def _get_qwen_coder_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -412,12 +429,12 @@ def _get_qwen_coder_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
 
     if len(tags) > 0:
         suffix_tag = TriggeredTagsFormat(
-            triggers=["<tool_call>\n<function="], tags=tags, excludes=_THINK_EXCLUDE_TOKENS
+            triggers=["<tool_call>\n<function="], tags=tags, excludes=excludes
         )
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -446,6 +463,8 @@ def _get_qwen_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -463,13 +482,11 @@ def _get_qwen_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
             )
         )
     if len(tags) > 0:
-        suffix_tag = TriggeredTagsFormat(
-            triggers=["<tool_call>"], tags=tags, excludes=_THINK_EXCLUDE_TOKENS
-        )
+        suffix_tag = TriggeredTagsFormat(triggers=["<tool_call>"], tags=tags, excludes=excludes)
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -503,11 +520,12 @@ def _get_harmony_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
     builtin_tools = input_dict.get("builtin_tools", [])
 
     tags = []
 
-    if reasoning:
+    if reasoning and not force_ignore_reasoning:
         if force_empty_reasoning:
             analysis_tag = TagFormat(
                 begin="<|channel|>analysis<|message|>",
@@ -564,6 +582,8 @@ def _get_deepseek_v3_2_structural_tag(input_dict: Dict[str, Any]) -> StructuralT
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -596,12 +616,12 @@ def _get_deepseek_v3_2_structural_tag(input_dict: Dict[str, Any]) -> StructuralT
                     end="</｜DSML｜function_calls>\n",
                 )
             ],
-            excludes=_THINK_EXCLUDE_TOKENS,
+            excludes=excludes,
         )
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -618,6 +638,8 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -650,12 +672,12 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
                     end="</minimax:tool_call>\n",
                 )
             ],
-            excludes=_THINK_EXCLUDE_TOKENS,
+            excludes=excludes,
         )
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
@@ -691,6 +713,8 @@ def _get_glm47_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     tools = input_dict.get("tools", [])
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
+    force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
     for tool in tools:
@@ -709,20 +733,17 @@ def _get_glm47_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         )
 
     if len(tags) > 0:
-        suffix_tag = TriggeredTagsFormat(
-            triggers=["<tool_call>"],
-            tags=tags,
-            excludes=_THINK_EXCLUDE_TOKENS,
-        )
+        suffix_tag = TriggeredTagsFormat(triggers=["<tool_call>"], tags=tags, excludes=excludes)
     else:
-        suffix_tag = AnyTextFormat(excludes=_THINK_EXCLUDE_TOKENS)
+        suffix_tag = AnyTextFormat(excludes=excludes)
 
-    if not reasoning:
+    if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
     if force_empty_reasoning:
         prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        # begin is "" because GLM chat template always add <think> at end of prompt
+        prefix_tag = TagFormat(begin="", content=AnyTextFormat(), end="</think>")
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))

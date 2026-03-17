@@ -35,6 +35,7 @@ def get_builtin_structural_tag(
     builtin_tools: List[Dict[str, Any]] = [],
     force_empty_reasoning: bool = False,
     force_ignore_reasoning: bool = False,
+    prompt_end_with_think: bool = True,
 ) -> StructuralTag:
     r"""Get structural tag for model. This function can generate structural tag for the given model
     with the given tools, builtin tools and reasoning mode.
@@ -62,7 +63,9 @@ def get_builtin_structural_tag(
         Whether to ignore reasoning constraints. i.e. The grammar will not constrain the
         thinking content at the beginning of the response. Only constraints the output of the
         tool calls.
-
+    prompt_end_with_think : bool
+        Whether to end the prompt with the thinking content. If True, the prompt will end with the thinking content.
+        structural tag will not constrain think begin tag(e.g. <think>).
 
     Returns
     -------
@@ -83,6 +86,7 @@ def get_builtin_structural_tag(
         "reasoning": reasoning,
         "force_empty_reasoning": force_empty_reasoning,
         "force_ignore_reasoning": force_ignore_reasoning,
+        "prompt_end_with_think": prompt_end_with_think,
     }
     return func(input_dict)
 
@@ -243,6 +247,7 @@ def _get_llama_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
 
     tags = []
@@ -269,10 +274,11 @@ def _get_llama_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(begin=think_begin, content=AnyTextFormat(), end="</think>")
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))
 
@@ -296,7 +302,15 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = [
+        "<|tool_calls_section_begin|>",
+        "<|tool_calls_section_end|>",
+        "<|tool_call_begin|>",
+        "<|tool_call_end|>",
+        "<|tool_call_argument_begin|>",
+    ]
 
     tags = []
     for tool in tools:
@@ -324,10 +338,15 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))
 
@@ -355,6 +374,12 @@ def _get_deepseek_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = [
+        "<｜tool▁calls▁begin｜>",
+        "<｜tool▁calls▁end｜>",
+        "<｜tool▁call▁begin｜>",
+        "<｜tool▁call▁end｜>",
+    ]
 
     tags = []
     for tool in tools:
@@ -385,7 +410,9 @@ def _get_deepseek_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if force_empty_reasoning:
         prefix_tag = ConstStringFormat(value="</think>")
     else:
-        prefix_tag = TagFormat(begin="", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin="", content=AnyTextFormat(excludes=think_content_excludes), end="</think>"
+        )
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))
 
@@ -409,7 +436,9 @@ def _get_qwen_coder_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = ["<tool_call>", "</tool_call>"]
 
     tags = []
     for tool in tools:
@@ -437,10 +466,15 @@ def _get_qwen_coder_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))
 
@@ -464,7 +498,9 @@ def _get_qwen_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = ["<tool_call>", "</tool_call>"]
 
     tags = []
     for tool in tools:
@@ -489,10 +525,15 @@ def _get_qwen_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     sequence_format = SequenceFormat(elements=[prefix_tag, suffix_tag])
     return StructuralTag(format=sequence_format)
@@ -583,7 +624,9 @@ def _get_deepseek_v3_2_structural_tag(input_dict: Dict[str, Any]) -> StructuralT
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = ["<｜DSML｜function_calls>", "</｜DSML｜function_calls>"]
 
     tags = []
     for tool in tools:
@@ -624,10 +667,15 @@ def _get_deepseek_v3_2_structural_tag(input_dict: Dict[str, Any]) -> StructuralT
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     sequence_format = SequenceFormat(elements=[prefix_tag, suffix_tag])
     return StructuralTag(format=sequence_format)
@@ -639,7 +687,9 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = ["<minimax:tool_call>", "</minimax:tool_call>"]
 
     tags = []
     for tool in tools:
@@ -680,10 +730,15 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        prefix_tag = TagFormat(begin="<think>", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     sequence_format = SequenceFormat(elements=[prefix_tag, suffix_tag])
     return StructuralTag(format=sequence_format)
@@ -714,7 +769,16 @@ def _get_glm47_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     reasoning = input_dict.get("reasoning", True)
     force_empty_reasoning = input_dict.get("force_empty_reasoning", False)
     force_ignore_reasoning = input_dict.get("force_ignore_reasoning", False)
+    prompt_end_with_think = input_dict.get("prompt_end_with_think", False)
     excludes = _THINK_EXCLUDE_TOKENS if not force_ignore_reasoning else []
+    think_content_excludes = [
+        "<tool_call>",
+        "</tool_call>",
+        "<arg_key>",
+        "</arg_key>",
+        "<arg_value>",
+        "</arg_value>",
+    ]
 
     tags = []
     for tool in tools:
@@ -740,10 +804,14 @@ def _get_glm47_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
     if not reasoning or force_ignore_reasoning:
         return StructuralTag(format=suffix_tag)
 
+    think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value="<think>\n\n</think>")
+        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
     else:
-        # begin is "" because GLM chat template always add <think> at end of prompt
-        prefix_tag = TagFormat(begin="", content=AnyTextFormat(), end="</think>")
+        prefix_tag = TagFormat(
+            begin=think_begin,
+            content=AnyTextFormat(excludes=think_content_excludes),
+            end="</think>",
+        )
 
     return StructuralTag(format=SequenceFormat(elements=[prefix_tag, suffix_tag]))

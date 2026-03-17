@@ -709,9 +709,7 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
 
     # generate function calling triggered tag
     if len(tags) > 0:
-        function_calling_tags = TagsWithSeparatorFormat(
-            tags=tags, separator="\n", at_least_one=True
-        )
+        function_calling_tags = TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True)
 
         suffix_tag = TriggeredTagsFormat(
             triggers=["<minimax:tool_call>"],
@@ -719,7 +717,7 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
                 TagFormat(
                     begin="<minimax:tool_call>\n",
                     content=function_calling_tags,
-                    end="</minimax:tool_call>\n",
+                    end="</minimax:tool_call>",
                 )
             ],
             excludes=excludes,

@@ -329,8 +329,18 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         )
 
     if len(tags) > 0:
+        function_calling_tags = TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True)
+
         suffix_tag = TriggeredTagsFormat(
-            triggers=["<|tool_call_begin|>"], tags=tags, excludes=excludes
+            triggers=["<|tool_calls_section_begin|>"],
+            tags=[
+                TagFormat(
+                    begin="<|tool_calls_section_begin|>",
+                    content=function_calling_tags,
+                    end="<|tool_calls_section_end|>",
+                )
+            ],
+            excludes=excludes,
         )
     else:
         suffix_tag = AnyTextFormat(excludes=excludes)

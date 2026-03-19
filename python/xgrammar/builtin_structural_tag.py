@@ -138,7 +138,9 @@ def _validate_tool_function(tools: Any) -> None:
         if not isinstance(function["name"], str):
             raise ValueError("The 'name' key in each tool must be a string.")
         parameters = function["parameters"]
-        if not isinstance(parameters, dict):
+        if not parameters:
+            function["parameters"] = {"type": "object", "properties": {}}
+        elif not isinstance(parameters, dict):
             raise ValueError("The 'parameters' key in each tool must be a dict.")
 
 

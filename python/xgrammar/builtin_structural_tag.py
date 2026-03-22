@@ -359,7 +359,7 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
 
     think_begin = "" if prompt_end_with_think else "<think>"
     if force_empty_reasoning:
-        prefix_tag = ConstStringFormat(value=f"{think_begin}\n\n</think>")
+        prefix_tag = ConstStringFormat(value="<think></think>")
     else:
         prefix_tag = TagFormat(
             begin=think_begin,

@@ -5,6 +5,7 @@ from .structural_tag import (
     ConstStringFormat,
     JSONSchemaFormat,
     QwenXMLParameterFormat,
+    RegexFormat,
     SequenceFormat,
     StructuralTag,
     TagFormat,
@@ -324,8 +325,14 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         name = function["name"]
         tags.append(
             TagFormat(
-                begin=f"<|tool_call_begin|>{name}<|tool_call_argument_begin|>",
-                content=JSONSchemaFormat(json_schema=parameters),
+                begin=f"<|tool_call_begin|>functions.{name}:",
+                content=SequenceFormat(
+                    elements=[
+                        RegexFormat(pattern=r"\d+"),
+                        ConstStringFormat(value="<|tool_call_argument_begin|>"),
+                        JSONSchemaFormat(json_schema=parameters),
+                    ]
+                ),
                 end="<|tool_call_end|>",
             )
         )

@@ -371,10 +371,34 @@ NB_MODULE(xgrammar_bindings, m) {
           nb::arg("start").none(),
           nb::arg("end").none()
       )
-      .def("_qwen_xml_tool_calling_to_ebnf", &QwenXMLToolCallingToEBNF, nb::arg("schema"))
-      .def("_minimax_xml_tool_calling_to_ebnf", &MiniMaxXMLToolCallingToEBNF, nb::arg("schema"))
-      .def("_deepseek_xml_tool_calling_to_ebnf", &DeepSeekXMLToolCallingToEBNF, nb::arg("schema"))
-      .def("_glm_xml_tool_calling_to_ebnf", &GlmXMLToolCallingToEBNF, nb::arg("schema"))
+      .def(
+          "_qwen_xml_tool_calling_to_ebnf",
+          &QwenXMLToolCallingToEBNF,
+          nb::arg("schema"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none() = nb::none()
+      )
+      .def(
+          "_minimax_xml_tool_calling_to_ebnf",
+          &MiniMaxXMLToolCallingToEBNF,
+          nb::arg("schema"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none() = nb::none()
+      )
+      .def(
+          "_deepseek_xml_tool_calling_to_ebnf",
+          &DeepSeekXMLToolCallingToEBNF,
+          nb::arg("schema"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none() = nb::none()
+      )
+      .def(
+          "_glm_xml_tool_calling_to_ebnf",
+          &GlmXMLToolCallingToEBNF,
+          nb::arg("schema"),
+          nb::arg("any_whitespace") = true,
+          nb::arg("max_whitespace_cnt").none() = nb::none()
+      )
       .def(
           "_generate_float_regex",
           [](std::optional<double> start, std::optional<double> end) {

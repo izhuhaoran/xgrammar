@@ -1,7 +1,7 @@
 """Defines all structural tag formats."""
 
 import json
-from typing import Any, Dict, List, Literal, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 try:
     # Python 3.9+
@@ -36,6 +36,12 @@ class JSONSchemaFormat(BaseModel):
     <parameter=key>value</parameter>), \"minimax_xml\" (MiniMax XML: <parameter name=\"key\">value</parameter>),
     \"deepseek_xml\" (DeepSeek XML(DeepSeek-v3.2): <{dsml_token}parameter name=\"key\" string=\"true|false\">value</{dsml_token}parameter>),
     \"glm_xml\" (GLM XML: <arg_key>key</arg_key><arg_value>value</arg_value>)."""
+    any_whitespace: bool = True
+    """Whether to allow any whitespace characters between tokens."""
+    max_whitespace_cnt: Optional[int] = None
+    """Maximum number of consecutive whitespace characters allowed.
+    When set, [ \\n\\t]* patterns are replaced with [ \\n\\t]{0,N},
+    preventing unbounded state accumulation in the Earley parser."""
 
 
 class QwenXMLParameterFormat(BaseModel):

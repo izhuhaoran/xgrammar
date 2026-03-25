@@ -515,34 +515,62 @@ std::string GenerateFloatRangeRegex(std::optional<double> start, std::optional<d
 /*!
  * \brief Convert a function call to a Grammar.
  * \param schema The schema of the parameters of the function call.
+ * \param any_whitespace Whether to allow any whitespace characters. Default: true.
+ * \param max_whitespace_cnt Maximum consecutive whitespace count. Default: std::nullopt
+ *   (unlimited).
  * \return The ebnf-grammar to match the requirements of the schema, and
  * in Qwen xml style.
  */
-std::string QwenXMLToolCallingToEBNF(const std::string& schema);
+std::string QwenXMLToolCallingToEBNF(
+    const std::string& schema,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 /*!
  * \brief Convert a function call to a Grammar.
  * \param schema The schema of the parameters of the function call.
+ * \param any_whitespace Whether to allow any whitespace characters. Default: true.
+ * \param max_whitespace_cnt Maximum consecutive whitespace count. Default: std::nullopt
+ *   (unlimited).
  * \return The ebnf-grammar to match the requirements of the schema, and
  * in MiniMax xml style.
  */
-std::string MiniMaxXMLToolCallingToEBNF(const std::string& schema);
+std::string MiniMaxXMLToolCallingToEBNF(
+    const std::string& schema,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 /*!
  * \brief Convert a function call to a Grammar.
  * \param schema The schema of the parameters of the function call.
+ * \param any_whitespace Whether to allow any whitespace characters. Default: true.
+ * \param max_whitespace_cnt Maximum consecutive whitespace count. Default: std::nullopt
+ *   (unlimited).
  * \return The ebnf-grammar to match the requirements of the schema, and
  * in DeepSeek xml style.
  */
-std::string DeepSeekXMLToolCallingToEBNF(const std::string& schema);
+std::string DeepSeekXMLToolCallingToEBNF(
+    const std::string& schema,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 /*!
  * \brief Convert a function call to a Grammar.
  * \param schema The schema of the parameters of the function call.
+ * \param any_whitespace Whether to allow any whitespace characters. Default: true.
+ * \param max_whitespace_cnt Maximum consecutive whitespace count. Default: std::nullopt
+ *   (unlimited).
  * \return The ebnf-grammar to match the requirements of the schema, and
  * in GLM xml style (<arg_key>key</arg_key><arg_value>value</arg_value>).
  */
-std::string GlmXMLToolCallingToEBNF(const std::string& schema);
+std::string GlmXMLToolCallingToEBNF(
+    const std::string& schema,
+    bool any_whitespace = true,
+    std::optional<int> max_whitespace_cnt = std::nullopt
+);
 
 }  // namespace xgrammar
 

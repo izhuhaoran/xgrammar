@@ -79,8 +79,18 @@ struct JSONSchemaFormat {
   static constexpr const char* type = "json_schema";
   std::string json_schema;
   std::string style = "json";  // "json","qwen_xml","minimax_xml","deepseek_xml","glm_xml"
-  JSONSchemaFormat(std::string json_schema, std::string style = "json")
-      : json_schema(std::move(json_schema)), style(std::move(style)) {}
+  bool any_whitespace = true;
+  std::optional<int> max_whitespace_cnt = std::nullopt;
+  JSONSchemaFormat(
+      std::string json_schema,
+      std::string style = "json",
+      bool any_whitespace = true,
+      std::optional<int> max_whitespace_cnt = std::nullopt
+  )
+      : json_schema(std::move(json_schema)),
+        style(std::move(style)),
+        any_whitespace(any_whitespace),
+        max_whitespace_cnt(max_whitespace_cnt) {}
   picojson::value ToJSON() const;
 };
 

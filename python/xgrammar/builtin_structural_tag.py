@@ -264,7 +264,7 @@ def _get_llama_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=('{"name": "' + name + '", "parameters": '),
-                content=JSONSchemaFormat(json_schema=parameters),
+                content=JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                 end="}",
             )
         )
@@ -330,7 +330,7 @@ def _get_kimi_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
                     elements=[
                         RegexFormat(pattern=r"\d+"),
                         ConstStringFormat(value="<|tool_call_argument_begin|>"),
-                        JSONSchemaFormat(json_schema=parameters),
+                        JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                     ]
                 ),
                 end="<|tool_call_end|>",
@@ -411,7 +411,7 @@ def _get_deepseek_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=f"<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>{name}<｜tool▁sep｜>",
-                content=JSONSchemaFormat(json_schema=parameters),
+                content=JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                 end="<｜tool▁call▁end｜>",
             )
         )
@@ -470,7 +470,9 @@ def _get_qwen_coder_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=f"<tool_call>\n<function={name}>\n",
-                content=QwenXMLParameterFormat(json_schema=parameters),
+                content=JSONSchemaFormat(
+                    json_schema=parameters, style="qwen_xml", max_whitespace_cnt=2
+                ),
                 end="\n</function>\n</tool_call>",
             )
         )
@@ -532,7 +534,7 @@ def _get_qwen_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=('<tool_call>\n{"name": "' + name + '", "arguments": '),
-                content=JSONSchemaFormat(json_schema=parameters),
+                content=JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                 end="}\n</tool_call>",
             )
         )
@@ -608,7 +610,7 @@ def _get_harmony_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=f"<|channel|>commentary to={name}<|constrain|>json<|message|>",
-                content=JSONSchemaFormat(json_schema=parameters),
+                content=JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                 end="<|call|>",
             )
         )
@@ -623,7 +625,7 @@ def _get_harmony_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=f"<|channel|>analysis to={name}<|message|>",
-                content=JSONSchemaFormat(json_schema=parameters),
+                content=JSONSchemaFormat(json_schema=parameters, max_whitespace_cnt=2),
                 end="<|call|>",
             )
         )
@@ -658,7 +660,9 @@ def _get_deepseek_v3_2_structural_tag(input_dict: Dict[str, Any]) -> StructuralT
         tags.append(
             TagFormat(
                 begin='<｜DSML｜invoke name="' + name + '">\n',
-                content=JSONSchemaFormat(json_schema=parameters, style="deepseek_xml"),
+                content=JSONSchemaFormat(
+                    json_schema=parameters, style="deepseek_xml", max_whitespace_cnt=2
+                ),
                 end="</｜DSML｜invoke>\n",
             )
         )
@@ -721,7 +725,9 @@ def _get_minimax_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin='<invoke name="' + name + '">\n',
-                content=JSONSchemaFormat(json_schema=parameters, style="minimax_xml"),
+                content=JSONSchemaFormat(
+                    json_schema=parameters, style="minimax_xml", max_whitespace_cnt=2
+                ),
                 end="</invoke>\n",
             )
         )
@@ -808,7 +814,9 @@ def _get_glm47_structural_tag(input_dict: Dict[str, Any]) -> StructuralTag:
         tags.append(
             TagFormat(
                 begin=f"<tool_call>{name}",
-                content=JSONSchemaFormat(json_schema=parameters, style="glm_xml"),
+                content=JSONSchemaFormat(
+                    json_schema=parameters, style="glm_xml", max_whitespace_cnt=2
+                ),
                 end="</tool_call>",
             )
         )

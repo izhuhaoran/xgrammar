@@ -479,8 +479,22 @@ Result<JSONSchemaFormat, ISTError> StructuralTagParser::ParseJSONSchemaFormat(
       }
     }
   }
+  bool any_whitespace = true;
+  auto aws_it = obj.find("any_whitespace");
+  if (aws_it != obj.end() && aws_it->second.is<bool>()) {
+    any_whitespace = aws_it->second.get<bool>();
+  }
+
+  std::optional<int> max_whitespace_cnt = std::nullopt;
+  auto mwc_it = obj.find("max_whitespace_cnt");
+  if (mwc_it != obj.end() && mwc_it->second.is<double>()) {
+    max_whitespace_cnt = static_cast<int>(mwc_it->second.get<double>());
+  }
+
   // here introduces a serialization/deserialization overhead; try to avoid it in the future.
-  return ResultOk<JSONSchemaFormat>(json_schema_it->second.serialize(false), style);
+  return ResultOk<JSONSchemaFormat>(
+      json_schema_it->second.serialize(false), style, any_whitespace, max_whitespace_cnt
+  );
 }
 
 Result<AnyTextFormat, ISTError> StructuralTagParser::ParseAnyTextFormat(const picojson::object& obj
@@ -1600,34 +1614,50 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const ConstStringF
 }
 
 Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const JSONSchemaFormat& format) {
-  const static std::unordered_map<std::string, std::function<std::string(const std::string&)>>
+  const static std::unordered_map<
+      std::string,
+      std::function<std::string(const std::string&, bool, std::optional<int>)>>
       style_to_grammar_converter = {
           {"json",
-           [&](const std::string& json_schema) -> std::string {
-             return JSONSchemaToEBNF(json_schema);
+           [](const std::string& json_schema,
+              bool any_whitespace,
+              std::optional<int> max_whitespace_cnt) -> std::string {
+             return JSONSchemaToEBNF(
+                 json_schema, any_whitespace, std::nullopt, std::nullopt, true, max_whitespace_cnt
+             );
            }},
           {"qwen_xml",
-           [&](const std::string& json_schema) -> std::string {
-             return QwenXMLToolCallingToEBNF(json_schema);
+           [](const std::string& json_schema,
+              bool any_whitespace,
+              std::optional<int> max_whitespace_cnt) -> std::string {
+             return QwenXMLToolCallingToEBNF(json_schema, any_whitespace, max_whitespace_cnt);
            }},
           {"minimax_xml",
-           [&](const std::string& json_schema) -> std::string {
-             return MiniMaxXMLToolCallingToEBNF(json_schema);
+           [](const std::string& json_schema,
+              bool any_whitespace,
+              std::optional<int> max_whitespace_cnt) -> std::string {
+             return MiniMaxXMLToolCallingToEBNF(json_schema, any_whitespace, max_whitespace_cnt);
            }},
           {"deepseek_xml",
-           [&](const std::string& json_schema) -> std::string {
-             return DeepSeekXMLToolCallingToEBNF(json_schema);
+           [](const std::string& json_schema,
+              bool any_whitespace,
+              std::optional<int> max_whitespace_cnt) -> std::string {
+             return DeepSeekXMLToolCallingToEBNF(json_schema, any_whitespace, max_whitespace_cnt);
            }},
           {"glm_xml",
-           [&](const std::string& json_schema) -> std::string {
-             return GlmXMLToolCallingToEBNF(json_schema);
+           [](const std::string& json_schema,
+              bool any_whitespace,
+              std::optional<int> max_whitespace_cnt) -> std::string {
+             return GlmXMLToolCallingToEBNF(json_schema, any_whitespace, max_whitespace_cnt);
            }},
       };
   auto converter = style_to_grammar_converter.find(format.style);
   if (converter == style_to_grammar_converter.end()) {
     return ResultErr<ISTError>("Unsupported parsing type: " + format.style);
   }
-  auto sub_grammar = Grammar::FromEBNF(converter->second(format.json_schema));
+  auto sub_grammar = Grammar::FromEBNF(
+      converter->second(format.json_schema, format.any_whitespace, format.max_whitespace_cnt)
+  );
   auto added_root_rule_id = SubGrammarAdder().Apply(&grammar_builder_, sub_grammar);
   return ResultOk(added_root_rule_id);
 }

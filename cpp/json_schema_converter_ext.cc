@@ -93,14 +93,30 @@ XMLToolCallingConverter::XMLToolCallingConverter(
     std::optional<int> max_whitespace_cnt,
     RefResolver ref_resolver,
     JSONFormat json_format,
-    bool any_order
+    bool any_order,
+    std::vector<std::string> excludes
 )
     : JSONSchemaConverter(
-          indent, separators, any_whitespace, max_whitespace_cnt, ref_resolver, any_order
+          indent,
+          separators,
+          any_whitespace,
+          max_whitespace_cnt,
+          ref_resolver,
+          any_order,
+          std::move(excludes)
       ),
       json_format_(json_format),
       nested_object_level_(0),
-      xml_wrapper_(kKeyWrapperMap.at(json_format)) {}
+      xml_wrapper_(kKeyWrapperMap.at(json_format)) {
+  // XML formatting can add whitespace outside a constrained raw string's rule.
+  // Reject exclusions that could straddle that boundary instead of silently bypassing them.
+  auto is_padding = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+  for (const auto& excluded : excludes_) {
+    XGRAMMAR_CHECK(
+        excluded.empty() || (!is_padding(excluded.front()) && !is_padding(excluded.back()))
+    ) << "XML JSONSchemaFormat.excludes must not start or end with formatting whitespace";
+  }
+}
 
 Grammar XMLToolCallingConverter::Convert(const SchemaSpecPtr& spec) {
   nested_object_level_ = 0;
@@ -213,8 +229,11 @@ void XMLToolCallingConverter::AddBasicRules() {
 
   // The outer part, xml format, is at level 1.
   nested_object_level_ = 1;
-  // Add XML string rule
-  builder_.UpdateRuleBody(kXMLString, TagDispatch(false, {xml_wrapper_.parameter_suffix}));
+  // Keep the unrestricted raw body as a single TagDispatch. The argument suffix is matched
+  // by the enclosing property rule, outside this body's exclusion scope.
+  auto string_excludes = excludes_;
+  string_excludes.push_back(xml_wrapper_.parameter_suffix);
+  builder_.UpdateRuleBody(kXMLString, TagDispatch(false, std::move(string_excludes)));
   AddCache(kStringCacheKey, builder_.GetRuleId(kXMLString));
 
   // Add XML any rule
@@ -234,10 +253,12 @@ void XMLToolCallingConverter::AddBasicRules() {
   // Add XML variable name rule
   builder_.UpdateRuleBody(
       kXMLVariableName,
-      Sequence(
-          {builder_.AddCharacterClass({{'a', 'z'}, {'A', 'Z'}, {'_', '_'}}),
-           builder_.AddCharacterClassStar({{'a', 'z'}, {'A', 'Z'}, {'0', '9'}, {'_', '_'}})}
-      )
+      !excludes_.empty()
+          ? ExcludingString("[a-zA-Z_][a-zA-Z0-9_]*", false, kXMLVariableName)
+          : Sequence(
+                {builder_.AddCharacterClass({{'a', 'z'}, {'A', 'Z'}, {'_', '_'}}),
+                 builder_.AddCharacterClassStar({{'a', 'z'}, {'A', 'Z'}, {'0', '9'}, {'_', '_'}})}
+            )
   );
 }
 
@@ -282,11 +303,44 @@ int32_t XMLToolCallingConverter::GenerateString(
     if (spec.format.has_value()) {
       auto regex = JSONFormatToRegexPattern(*spec.format);
       if (regex.has_value()) {
+        if (!excludes_.empty()) {
+          // XML formats use the CFG regex converter even without excludes. Apply the filter
+          // to that same language instead of switching format validation to RegexFSM.
+          return ExcludingString(
+              *regex,
+              false,
+              rule_name,
+              {},
+              /*force_cfg_expansion=*/true,
+              /*close_json_string=*/false
+          );
+        }
         return RegexExpression(*regex, false, true);
       }
     }
     if (spec.pattern.has_value()) {
+      if (!excludes_.empty()) {
+        return ExcludingString(
+            *spec.pattern,
+            false,
+            rule_name,
+            {},
+            /*force_cfg_expansion=*/true,
+            /*close_json_string=*/false
+        );
+      }
       return RegexExpression(*spec.pattern, false, /*force_cfg_expansion=*/true);
+    }
+    if (!excludes_.empty()) {
+      return ExcludingString(
+          "[\\s\\S]{" + std::to_string(spec.min_length) + "," +
+              (spec.max_length == -1 ? "" : std::to_string(spec.max_length)) + "}",
+          false,
+          rule_name,
+          {},
+          /*force_cfg_expansion=*/true,
+          /*close_json_string=*/false
+      );
     }
     return Repeat(
         rule_name + "_characters",
@@ -321,6 +375,13 @@ int32_t XMLToolCallingConverter::GenerateConst(
     const ConstSpec& spec, const std::string& rule_name
 ) {
   if (nested_object_level_ <= 1) {
+    if (!excludes_.empty()) {
+      picojson::value value;
+      XGRAMMAR_CHECK(picojson::parse(value, spec.json_value).empty());
+      if (!IsAllowedLiteral(value, true)) {
+        return builder_.AddCharacterClass({{0, 0x10ffff}}, true);
+      }
+    }
     return ByteString(XMLValue(spec.json_value));
   }
   return JSONSchemaConverter::GenerateConst(spec, rule_name);
@@ -333,7 +394,15 @@ int32_t XMLToolCallingConverter::GenerateEnum(const EnumSpec& spec, const std::s
     std::vector<int32_t> values;
     values.reserve(spec.json_values.size());
     for (const auto& value : spec.json_values) {
+      if (!excludes_.empty()) {
+        picojson::value parsed;
+        XGRAMMAR_CHECK(picojson::parse(parsed, value).empty());
+        if (!IsAllowedLiteral(parsed, true)) continue;
+      }
       values.push_back(ByteString(XMLValue(value)));
+    }
+    if (values.empty()) {
+      return builder_.AddCharacterClass({{0, 0x10ffff}}, true);
     }
     return Choice(values);
   }
@@ -368,6 +437,9 @@ int32_t XMLToolCallingConverter::FormatPropertyKey(
     std::optional<std::string> pinned_type;
     if (json_format_ == JSONFormat::kKimiK3XML) {
       pinned_type = KimiK3TypeAttr(schema);
+    }
+    if (!IsAllowedString(EscapeAttrValue(key))) {
+      return builder_.AddCharacterClass({{0, 0x10ffff}}, true);
     }
     return Sequence(
         {ByteString(xml_wrapper_.key_wrapper_prefix + EscapeAttrValue(key)),

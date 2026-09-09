@@ -154,6 +154,7 @@ Matches content that conforms to a JSON Schema.
 | `json_schema` | `object` | (required) |
 | `style` | `"json"` \| `"qwen_xml"` \| `"minimax_xml"` \| `"deepseek_xml"` \| `"glm_xml"` \| `"cohere_xml"` \| `"kimi_k3_xml"` | `"json"` |
 | `any_order` | `bool` | `false` |
+| `excludes` | `string[]` | `[]` |
 
 - **Use it when**: the structured part is naturally expressed as schema-constrained data
 
@@ -169,6 +170,21 @@ Matches content that conforms to a JSON Schema.
 
 `any_order` relaxes object property ordering (see [below](#property-ordering-with-any-order)). It
 works with every `style`.
+
+`excludes` forbids non-empty substrings in string values and property names, including nested
+JSON strings, in addition to the converter's existing string constraints. Conflicting
+`const`/`enum` alternatives are removed; an empty list preserves the existing behavior.
+Matches use emitted text before JSON/XML unescaping (excluding `ab` still allows
+`"\u0061b"`), may span tokens, and do not span separate strings. JSON delimiter quotes,
+numbers, punctuation, and XML parameter wrappers are outside the exclusion scope.
+For XML styles, exclusions starting or ending with space, tab, CR, or LF are rejected
+at compilation because formatting whitespace can sit outside the raw string rule.
+
+For Kimi-K3, `excludes=["<|open|>", "<|close|>", "<|sep|>"]` prevents controls inside
+string content while still allowing `<|close|>argument<|sep|>` after the value finishes.
+Exclusion construction uses the shared FSM resource budgets. Unsupported regular
+expressions or constraints exceeding these budgets raise a compilation error; exclusions are
+never silently dropped. Non-empty exclusions are not supported for `cohere_xml`.
 
 ```json
 {

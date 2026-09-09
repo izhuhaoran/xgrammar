@@ -13,6 +13,7 @@ export interface JSONSchemaFormat {
   type: "json_schema";
   json_schema: JSONSchemaValue;
   style?: "json" | "qwen_xml" | "minimax_xml" | "deepseek_xml" | "glm_xml" | "cohere_xml";
+  excludes?: string[];
 }
 
 export interface QwenXMLParameterFormat {

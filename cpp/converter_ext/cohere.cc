@@ -525,6 +525,20 @@ int32_t CohereXMLToolCallingConverter::GenerateArray(
   );
 }
 
+std::string CohereXMLToolCallingConverter::ObjectKeyIdentity(const std::string& key) const {
+  if (!InCohereValueContext()) return key;
+  // Match the raw bytes collected from dynamic names, using the renderer's
+  // existing entities. Identity metadata does not add key validation.
+  std::string result;
+  for (uint8_t byte : key) {
+    if (byte < 0x80)
+      result += SerializeCohereKeyCodepoint(byte);
+    else
+      result.push_back(static_cast<char>(byte));
+  }
+  return result;
+}
+
 int32_t CohereXMLToolCallingConverter::FormatProperty(
     const std::string& key,
     int32_t value_rule_id,

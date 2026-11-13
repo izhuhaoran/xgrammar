@@ -72,6 +72,9 @@ class GrammarFunctor {
         builder_->UpdateMaxTokens(i, rule.max_tokens);
         builder_->UpdateMaxChars(i, rule.max_chars);
         builder_->UpdateCaptureName(i, rule.capture_name);
+        if (const auto* key = base_grammar_->GetObjectKeyInfo(i)) {
+          builder_->UpdateObjectKeyInfo(i, *key);
+        }
         if (const auto* suffix_stop_info = base_grammar_->GetSuffixStopInfo(i)) {
           builder_->UpdateSuffixStopInfo(i, *suffix_stop_info);
         }

@@ -385,6 +385,24 @@ void GrammarBuilder::UpdateSuffixStopInfo(std::string rule_name, const SuffixSto
   UpdateSuffixStopInfo(rule_id, info);
 }
 
+void GrammarBuilder::UpdateObjectKeyInfo(
+    int32_t rule_id, const Grammar::Impl::ObjectKeyInfo& info
+) {
+  XGRAMMAR_CHECK(rule_id >= 0 && rule_id < static_cast<int32_t>(grammar_->rules_.size()));
+  auto it = std::lower_bound(
+      grammar_->object_key_infos_.begin(),
+      grammar_->object_key_infos_.end(),
+      rule_id,
+      [](const Grammar::Impl::ObjectKeyInfo& value, int32_t id) { return value.rule_id < id; }
+  );
+  auto value = info;
+  value.rule_id = rule_id;
+  if (it != grammar_->object_key_infos_.end() && it->rule_id == rule_id)
+    *it = std::move(value);
+  else
+    grammar_->object_key_infos_.insert(it, std::move(value));
+}
+
 void GrammarBuilder::UpdateLazy(int32_t rule_id, bool is_lazy) {
   XGRAMMAR_CHECK(rule_id < static_cast<int32_t>(grammar_->rules_.size()))
       << "Rule id " << rule_id << " is out of range.";

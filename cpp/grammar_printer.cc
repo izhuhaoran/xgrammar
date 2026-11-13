@@ -15,11 +15,16 @@
 
 namespace xgrammar {
 
-std::string GrammarPrinter::PrintRule(const Rule& rule, const SuffixStopInfo* suffix_stop_info) {
+std::string GrammarPrinter::PrintRule(
+    const Rule& rule,
+    const SuffixStopInfo* suffix_stop_info,
+    const Grammar::Impl::ObjectKeyInfo* object_key_info
+) {
   std::string res = rule.name;
   // Print the attributes as one comma-separated bracket group, re-parseable by the EBNF lexer.
   if (rule.max_tokens >= 0 || rule.max_chars >= 0 || !rule.capture_name.empty() ||
-      suffix_stop_info != nullptr || rule.is_lazy || rule.temperature.has_value()) {
+      suffix_stop_info != nullptr || rule.is_lazy || rule.temperature.has_value() ||
+      object_key_info) {
     std::string attributes;
     auto append_attribute = [&](const std::string& attribute) {
       if (!attributes.empty()) {
@@ -60,6 +65,16 @@ std::string GrammarPrinter::PrintRule(const Rule& rule, const SuffixStopInfo* su
     if (rule.is_lazy) {
       append_attribute("lazy");
     }
+    if (object_key_info) {
+      if (object_key_info->object)
+        append_attribute("object_keys");
+      else if (object_key_info->key_codec == 1)
+        append_attribute("object_key_json");
+      else if (object_key_info->key_codec == 2)
+        append_attribute("object_key_raw");
+      else
+        append_attribute("object_key=\"" + EscapeString(object_key_info->key) + "\"");
+    }
     if (rule.temperature.has_value()) {
       std::ostringstream temperature;
       temperature << std::setprecision(std::numeric_limits<float>::max_digits10)
@@ -76,7 +91,11 @@ std::string GrammarPrinter::PrintRule(const Rule& rule, const SuffixStopInfo* su
 }
 
 std::string GrammarPrinter::PrintRule(int32_t rule_id) {
-  return PrintRule(grammar_->GetRule(rule_id), grammar_->GetSuffixStopInfo(rule_id));
+  return PrintRule(
+      grammar_->GetRule(rule_id),
+      grammar_->GetSuffixStopInfo(rule_id),
+      grammar_->GetObjectKeyInfo(rule_id)
+  );
 }
 
 std::string GrammarPrinter::PrintGrammarExpr(const GrammarExpr& grammar_expr) {

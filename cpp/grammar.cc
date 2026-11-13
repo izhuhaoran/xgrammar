@@ -31,6 +31,7 @@ std::size_t MemorySize(const Grammar::Impl& impl) {
   /// This should be improved in the future.
   return impl.rules_.size() * sizeof(Grammar::Impl::Rule) +
          impl.suffix_stop_infos_.size() * sizeof(Grammar::Impl::SuffixStopInfo) +
+         impl.object_key_infos_.size() * sizeof(Grammar::Impl::ObjectKeyInfo) +
          MemorySize(impl.grammar_expr_data_) + MemorySize(impl.grammar_expr_indptr_) +
          MemorySize(impl.complete_fsm) + MemorySize(impl.per_rule_fsms) +
          MemorySize(impl.allow_empty_rule_ids);
@@ -287,6 +288,14 @@ std::optional<std::string> Grammar::Impl::Validate() const {
   }
   if (!rule_ok(root_rule_id_)) {
     return "root_rule_id " + std::to_string(root_rule_id_) + " is out of range";
+  }
+  int32_t previous_key_rule = -1;
+  for (const auto& info : object_key_infos_) {
+    if (!rule_ok(info.rule_id) || info.rule_id <= previous_key_rule || info.key_codec < 0 ||
+        info.key_codec > 2 || (info.object && info.key_codec != 0)) {
+      return "object_key_infos must have distinct, ordered valid rule ids";
+    }
+    previous_key_rule = info.rule_id;
   }
   for (const auto& info : suffix_stop_infos_) {
     if (!rule_ok(info.rule_id) || (info.body_rule_id != -1 && !rule_ok(info.body_rule_id)) ||

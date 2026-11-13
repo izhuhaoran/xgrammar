@@ -122,6 +122,25 @@ class Grammar::Impl {
     }
   };
 
+  /*! \brief Sparse any-order object/key boundaries; values keep their original grammars. */
+  struct ObjectKeyInfo {
+    int32_t rule_id = -1;
+    bool object = false;
+    std::string key;
+    int32_t key_codec = 0;  // 0: declared key; 1: JSON-encoded dynamic key; 2: raw key.
+  };
+
+  const ObjectKeyInfo* GetObjectKeyInfo(int32_t rule_id) const {
+    auto it = std::lower_bound(
+        object_key_infos_.begin(),
+        object_key_infos_.end(),
+        rule_id,
+        [](const ObjectKeyInfo& info, int32_t id) { return info.rule_id < id; }
+    );
+    return it != object_key_infos_.end() && it->rule_id == rule_id ? &*it : nullptr;
+  }
+  bool HasObjectKeys() const { return !object_key_infos_.empty(); }
+
   /*! \brief Get the number of rules. */
   int32_t NumRules() const { return rules_.size(); }
   /*! \brief Get the rule with the given id. */
@@ -393,6 +412,7 @@ class Grammar::Impl {
   std::vector<Rule> rules_;
   /*! \brief Suffix/stop metadata, sorted by rule_id and omitted for ordinary rules. */
   std::vector<SuffixStopInfo> suffix_stop_infos_;
+  std::vector<ObjectKeyInfo> object_key_infos_;
   /*! \brief The data of all grammar_exprs. */
   std::vector<int32_t> grammar_expr_data_;
   /*! \brief The start index of every grammar_expr in grammar_expr_data_. grammar_expr_id is the
@@ -469,12 +489,22 @@ XGRAMMAR_MEMBER_ARRAY(
     &Grammar::Impl::SuffixStopInfo::stop_capture_name
 );
 
+XGRAMMAR_MEMBER_ARRAY(
+    Grammar::Impl::ObjectKeyInfo,
+    &Grammar::Impl::ObjectKeyInfo::rule_id,
+    &Grammar::Impl::ObjectKeyInfo::object,
+    &Grammar::Impl::ObjectKeyInfo::key,
+    &Grammar::Impl::ObjectKeyInfo::key_codec
+);
+
 XGRAMMAR_MEMBER_TABLE(
     Grammar::Impl,
     "rules",
     &Grammar::Impl::rules_,
     "suffix_stop_infos",
     &Grammar::Impl::suffix_stop_infos_,
+    "object_key_infos",
+    &Grammar::Impl::object_key_infos_,
     "grammar_expr_data",
     &Grammar::Impl::grammar_expr_data_,
     "grammar_expr_indptr",

@@ -159,6 +159,10 @@ class CompiledGrammar::Impl {
   /*! \brief Whether missing token mask cache entries should be generated on demand. */
   bool enable_dynamic_compilation{false};
 
+  // Derived rule flags: a zero-byte return may validate a key or a seen-key set.
+  // Only these rules need a completion-sensitive mask variant.
+  std::vector<uint8_t> object_key_completion_rules;
+
   /*! \brief Reusable cache shared by grammars created from the same compiler. */
   std::shared_ptr<RuleLevelCache> rule_level_cache;
 
@@ -199,6 +203,12 @@ void PopulateRepeatInteriorBitsets(
     const TokenizerInfo& tokenizer_info,
     std::unordered_map<ParserState, AdaptiveTokenMask, StateHashForCache, StateEqualForCache>* cache
 );
+
+// Completion can finish an active dynamic key or validate the object context
+// before another byte. Only the latter matters outside a dynamic key.
+constexpr uint8_t kFinishDynamicKey = 1;
+constexpr uint8_t kCheckObjectContext = 2;
+std::vector<uint8_t> FindObjectKeyCompletionRules(const Grammar& grammar);
 
 XGRAMMAR_MEMBER_TABLE(
     CompiledGrammar::Impl,

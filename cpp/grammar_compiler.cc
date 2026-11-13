@@ -144,6 +144,8 @@ class GrammarMatcherForTokenMaskCache : public EarleyParser {
   // Temporary data for GetTokenEdgeAcceptedIndices.
   std::vector<int32_t> tmp_token_edge_accepted_;
   std::vector<int32_t> tmp_token_edge_excluded_;
+  bool lookahead_object_key_check_ = false;
+  bool token_edges_check_object_keys_ = false;
 };
 
 void GrammarMatcherForTokenMaskCache::AdaptCacheWithLookahead(
@@ -313,6 +315,7 @@ void GrammarMatcherForTokenMaskCache::AdaptCacheWithLookahead(
 std::pair<bool, bool> GrammarMatcherForTokenMaskCache::IsTokenPassLookaheadAssertion(
     const std::string& token, const std::vector<bool>& can_reach_end_stack
 ) {
+  lookahead_object_key_check_ = false;
   bool accepted = true;
   bool can_reach_end = true;
   auto lookahead_assertion_id = grammar_->GetRule(init_rule_id_).lookahead_assertion_id;
@@ -352,6 +355,7 @@ std::pair<bool, bool> GrammarMatcherForTokenMaskCache::IsTokenPassLookaheadAsser
     }
     // Case 2. The whole token is accepted
     if (last_accept_pos == token_len - 1) {
+      lookahead_object_key_check_ = HasEnteredObjectKeyCheck();
       PopLastStates(last_accept_pos - i + 2);
       can_reach_end = false;
       return {accepted, can_reach_end};
@@ -664,7 +668,12 @@ bool GrammarMatcherForTokenMaskCache::GetTokenMaskWithFirstCharacterCheck(
       }
 
       if (accepted) {
-        if (HasEnteredCharBudget()) {
+        if (HasEnteredCharBudget() || HasEnteredObjectKeyCheck() ||
+            (initial_state_.object_key_context < 0 && can_reach_end &&
+             scanable_state_history_.Back().size() == 0)) {
+          // A live continuation within the leaf does not need its completion
+          // guard yet. In particular, raw names can end after every letter but
+          // may still extend a name that has already appeared.
           tmp_uncertain_indices_.push_back(i);
         } else {
           tmp_accepted_indices_.push_back(i);
@@ -673,7 +682,8 @@ bool GrammarMatcherForTokenMaskCache::GetTokenMaskWithFirstCharacterCheck(
         auto [lookahead_accepted, lookahead_completed] =
             IsTokenPassLookaheadAssertion(token, tmp_can_reach_end_stack_);
         if ((!is_root_rule) && lookahead_accepted) {
-          if (lookahead_completed || !is_exact_lookahead) {
+          if (lookahead_completed || !is_exact_lookahead || lookahead_object_key_check_ ||
+              HasEnteredObjectKeyCheck() || initial_state_.object_key_context < 0) {
             tmp_uncertain_indices_.push_back(i);
           } else if (HasEnteredCharBudget()) {
             tmp_uncertain_indices_.push_back(i);
@@ -745,6 +755,7 @@ const std::vector<int32_t>& GrammarMatcherForTokenMaskCache::GetTokenEdgeAccepte
 
   tmp_token_edge_accepted_.clear();
   tmp_token_edge_excluded_.clear();
+  token_edges_check_object_keys_ = initial_state_.object_key_context < 0;
 
   XGRAMMAR_DCHECK(grammar_->per_rule_fsms[init_rule_id_].has_value());
   const auto& fsm = grammar_->per_rule_fsms[init_rule_id_].value();
@@ -763,6 +774,17 @@ const std::vector<int32_t>& GrammarMatcherForTokenMaskCache::GetTokenEdgeAccepte
   bool has_exclude_token = false;
 
   for (const auto& edge : edges) {
+    if (has_object_keys_ && !token_edges_check_object_keys_ &&
+        (edge.IsToken() || edge.IsExcludeToken())) {
+      // Check only this edge's zero-byte closure. Ordinary any_tokens loops
+      // outside keys need no per-token object-key validation.
+      auto next = initial_state_;
+      next.element_id = edge.target;
+      tmp_object_key_check_entered_ = HasEnteredObjectKeyCheck();
+      PushStateAndExpand(next);
+      token_edges_check_object_keys_ = HasEnteredObjectKeyCheck();
+      PopLastStates(1);
+    }
     if (edge.IsToken()) {
       auto info = fsm.GetFsm().GetFsm().GetTokenEdgeInfo(edge.GetAuxIndex());
       for (int32_t i = 0; i < info.Count(); ++i) {
@@ -842,6 +864,17 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
     lookahead_hash = GrammarFSMHasher::HashSequence(grammar_, lookahead_id);
     const auto& original_to_new_id = grammar_->per_rule_fsm_new_state_ids[init_rule_id_];
     fsm_hash = grammar_->per_rule_fsm_hashes[init_rule_id_].value();
+    if (has_object_keys_) {
+      // Contextual masks retain guard-crossing uncertainty. Keep their namespace
+      // and root status apart from ordinary/basic masks, which may be adapted.
+      fsm_hash = HashCombine(
+          fsm_hash.value(),
+          uint64_t{0x6f626a656374},
+          is_root_rule,
+          initial_state_.object_key_context < 0
+      );
+      if (lookahead_id == -1) lookahead_hash = 0;
+    }
     for (const auto& original_new_pair : original_to_new_id) {
       if (original_new_pair.first == initial_state_.element_id) {
         new_state_id = original_new_pair.second;
@@ -862,15 +895,32 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
         return crossing_cache.value();
       }
     }
-    crossing_cache = rule_level_cache_->GetCache(
-        fsm_hash.value(), new_state_id, fsm.GetNodeNum(), fsm.GetEdgeNum()
-    );
+    if (!has_object_keys_) {
+      crossing_cache = rule_level_cache_->GetCache(
+          fsm_hash.value(), new_state_id, fsm.GetNodeNum(), fsm.GetEdgeNum()
+      );
+    }
     // If the rule doesn't have a lookahead, then it is exactly the same fsm.
     if (crossing_cache.has_value()) {
       AdaptCacheWithLookahead(&crossing_cache.value(), is_root_rule);
       return std::move(crossing_cache.value());
     }
   }
+
+  auto cache_object_key_mask = [&](const AdaptiveTokenMask& mask) {
+    if (!has_object_keys_) return false;
+    if (rule_level_cache_is_available && lookahead_hash.has_value()) {
+      const auto& fsm = grammar_->per_rule_fsms[init_rule_id_].value();
+      rule_level_cache_->AddCache(
+          HashCombine(fsm_hash.value(), lookahead_hash.value(), is_exact_lookahead),
+          new_state_id,
+          fsm.GetNodeNum(),
+          fsm.GetEdgeNum(),
+          mask
+      );
+    }
+    return true;
+  };
 
   std::bitset<256> first_character_mask;
   GetFirstCharacterMask(first_character_mask);
@@ -891,7 +941,7 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
   // Token edges are rechecked at runtime when a character budget is present because accepting
   // one can enter a budgeted rule within the same token.
   if (!token_edge_accepted.empty()) {
-    if (has_char_budget_rules_) {
+    if (has_char_budget_rules_ || token_edges_check_object_keys_) {
       IntsetUnion(&tmp_uncertain_indices_, token_edge_accepted);
     } else {
       IntsetUnion(&tmp_accepted_indices_, token_edge_accepted);
@@ -907,6 +957,7 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
         tmp_rejected_indices_,
         tmp_uncertain_indices_
     );
+    if (cache_object_key_mask(return_value)) return return_value;
     if (rule_level_cache_is_available) {
       if (lookahead_id == -1 && !is_root_rule) {
         // If the rule doesn't have a lookahead, then it is exactly the same fsm.
@@ -977,6 +1028,7 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
         tmp_uncertain_indices_
     );
 
+    if (cache_object_key_mask(return_value)) return return_value;
     if (rule_level_cache_is_available) {
       // Prepare for cache.
       auto& fsm = grammar_->per_rule_fsms[init_rule_id_].value();
@@ -1029,7 +1081,14 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
   }
 }
 
-const AdaptiveTokenMask& CompiledGrammar::Impl::GetAdaptiveTokenMask(const ParserState& state) {
+const AdaptiveTokenMask& CompiledGrammar::Impl::GetAdaptiveTokenMask(const ParserState& input) {
+  auto state = input;
+  const uint8_t checks =
+      object_key_completion_rules.empty() ? 0 : object_key_completion_rules[input.rule_id];
+  state.object_key_context = ((input.object_key_context < 0 && (checks & kFinishDynamicKey)) ||
+                              (input.object_key_context != 0 && (checks & kCheckObjectContext)))
+                                 ? -1
+                                 : 0;
   if (!enable_dynamic_compilation) {
     auto iterator = adaptive_token_mask_cache.find(state);
     XGRAMMAR_CHECK(iterator != adaptive_token_mask_cache.end())
@@ -1055,6 +1114,7 @@ const AdaptiveTokenMask& CompiledGrammar::Impl::GetAdaptiveTokenMask(const Parse
       -1,
       state.sub_element_id
   );
+  cache_state.object_key_context = state.object_key_context;
   auto generated_mask = GrammarMatcherForTokenMaskCache(
                             grammar,
                             cache_state,
@@ -1091,6 +1151,11 @@ void CompiledGrammar::Impl::MaterializeAdaptiveTokenMaskCache() {
       }
       state.element_id = element_id;
       GetAdaptiveTokenMask(state);
+      if (!object_key_completion_rules.empty() && object_key_completion_rules[rule_id]) {
+        auto key_state = state;
+        key_state.object_key_context = -1;
+        GetAdaptiveTokenMask(key_state);
+      }
     }
   }
 }
@@ -1188,6 +1253,8 @@ static void CheckTokenIdsInVocab(const Grammar& grammar, int vocab_size) {
 CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_unoptimized) {
   auto compiled_grammar_impl = std::make_shared<CompiledGrammar::Impl>();
   compiled_grammar_impl->grammar = GrammarOptimizer::Apply(grammar_unoptimized);
+  compiled_grammar_impl->object_key_completion_rules =
+      FindObjectKeyCompletionRules(compiled_grammar_impl->grammar);
   compiled_grammar_impl->tokenizer_info = tokenizer_info_;
   compiled_grammar_impl->enable_dynamic_compilation = enable_dynamic_compilation_;
   if (enable_dynamic_compilation_ && rule_level_cache_.has_value()) {
@@ -1272,6 +1339,12 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
         continue;
       }
       add_task_adaptive_token_mask(cur_stack_element, rule_id == root_rule_id);
+      if (!compiled_grammar_impl->object_key_completion_rules.empty() &&
+          compiled_grammar_impl->object_key_completion_rules[rule_id]) {
+        auto key_state = cur_stack_element;
+        key_state.object_key_context = -1;
+        add_task_adaptive_token_mask(key_state, rule_id == root_rule_id);
+      }
     }
   }
 

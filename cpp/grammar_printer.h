@@ -36,7 +36,11 @@ class GrammarPrinter {
   std::string ToString();
 
   /*! \brief Print a rule. */
-  std::string PrintRule(const Rule& rule, const SuffixStopInfo* suffix_stop_info);
+  std::string PrintRule(
+      const Rule& rule,
+      const SuffixStopInfo* suffix_stop_info,
+      const Grammar::Impl::ObjectKeyInfo* object_key_info = nullptr
+  );
   /*! \brief Print a rule corresponding to the given id. */
   std::string PrintRule(int32_t rule_id);
   /*! \brief Print a GrammarExpr. */

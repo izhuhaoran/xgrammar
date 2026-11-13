@@ -4877,7 +4877,7 @@ any_order_schema = {
 # just confirm any_order is parsed from the structural tag and threaded through to the grammar.
 any_order_json_instance_is_accepted = [
     ('{"c": true, "a": 1, "b": "x"}', True),  # reordered/interleaved -> any_order is applied
-    ('{"a": 1, "b": "x", "c": true, "c": false}', True),  # other entries are not count-limited
+    ('{"a": 1, "b": "x", "c": true, "c": false}', False),  # duplicate optional key
     ('{"a": 1}', False),  # fewer entries than #required
     ('{"a": 1, "b": "x", "d": 5}', False),  # additionalProperties false
 ]

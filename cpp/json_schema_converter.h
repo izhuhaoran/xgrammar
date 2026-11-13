@@ -364,6 +364,16 @@ class JSONSchemaConverter {
       const SchemaSpecPtr& schema
   );
 
+  virtual bool JSONEncodedKey() const { return true; }
+  virtual std::string ObjectKeyIdentity(const std::string& key) const { return key; }
+  int32_t FormatOtherPropertyWithKeyCheck(
+      int32_t key_pattern_expr,
+      int32_t value_rule_id,
+      const std::string& rule_name,
+      const std::string& rule_name_suffix,
+      const SchemaSpecPtr& schema
+  );
+
   /*! \brief Get the basic string rule name. Override for different formats. */
   virtual std::string GetKeyPattern() const;
 

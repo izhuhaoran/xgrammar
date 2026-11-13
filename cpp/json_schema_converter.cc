@@ -2917,6 +2917,23 @@ int32_t JSONSchemaConverter::FormatOtherProperty(
   return Sequence({key_pattern_expr, colon_expr_id_, RuleRef(value_rule_id)});
 }
 
+int32_t JSONSchemaConverter::FormatOtherPropertyWithKeyCheck(
+    int32_t key_pattern_expr,
+    int32_t value_rule_id,
+    const std::string& rule_name,
+    const std::string& rule_name_suffix,
+    const SchemaSpecPtr& schema
+) {
+  if (any_order_) {
+    const int32_t key_rule = builder_.AddRuleWithHint(
+        rule_name + "_" + rule_name_suffix + "_seen_key", key_pattern_expr
+    );
+    builder_.UpdateObjectKeyInfo(key_rule, {-1, false, {}, JSONEncodedKey() ? 1 : 2});
+    key_pattern_expr = RuleRef(key_rule);
+  }
+  return FormatOtherProperty(key_pattern_expr, value_rule_id, rule_name, rule_name_suffix, schema);
+}
+
 int32_t JSONSchemaConverter::CreatePatternKeyRule(
     const std::string& pattern, const std::string& rule_name_hint
 ) {
@@ -2972,15 +2989,19 @@ int32_t JSONSchemaConverter::GetAnyOrderRuleForProperties(
     const auto& property = properties[index];
     int32_t value_rule_id =
         CreateRule(property.schema, rule_name + "_prop_" + std::to_string(index));
-    items.push_back(FormatProperty(property.name, value_rule_id, rule_name, index, property.schema)
+    int32_t property_rule = builder_.AddRuleWithHint(
+        rule_name + "_key_" + std::to_string(index),
+        FormatProperty(property.name, value_rule_id, rule_name, index, property.schema)
     );
+    builder_.UpdateObjectKeyInfo(property_rule, {-1, false, ObjectKeyIdentity(property.name)});
+    items.push_back(RuleRef(property_rule));
   }
   if (additional != nullptr) {
     if (additional_property_override.has_value()) {
       items.push_back(*additional_property_override);
     } else {
       int32_t value_rule_id = CreateRule(additional, rule_name + "_" + additional_suffix);
-      items.push_back(FormatOtherProperty(
+      items.push_back(FormatOtherPropertyWithKeyCheck(
           GetKeyPatternExcluding(properties, rule_name),
           value_rule_id,
           rule_name,
@@ -3052,7 +3073,7 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
         additional_pattern = *additional_property_override;
       } else {
         int32_t value_rule_id = CreateRule(additional, rule_name + "_" + additional_suffix);
-        additional_pattern = FormatOtherProperty(
+        additional_pattern = FormatOtherPropertyWithKeyCheck(
             GetKeyPatternExcluding(properties, rule_name),
             value_rule_id,
             rule_name,
@@ -3337,7 +3358,7 @@ int32_t JSONSchemaConverter::GenerateObject(
         );
         int32_t value_rule_id =
             CreateRule(pattern_property.schema, rule_name + "_" + pattern_suffix);
-        patterns.push_back(FormatOtherProperty(
+        patterns.push_back(FormatOtherPropertyWithKeyCheck(
             RuleRef(key_rule_id), value_rule_id, rule_name, pattern_suffix, pattern_property.schema
         ));
       }
@@ -3345,7 +3366,7 @@ int32_t JSONSchemaConverter::GenerateObject(
       if (effective_additional) {
         int32_t value_rule_id =
             CreateRule(effective_additional, rule_name + "_" + effective_suffix);
-        patterns.push_back(FormatOtherProperty(
+        patterns.push_back(FormatOtherPropertyWithKeyCheck(
             KeyPatternExpression(), value_rule_id, rule_name, effective_suffix, effective_additional
         ));
       }
@@ -3360,7 +3381,7 @@ int32_t JSONSchemaConverter::GenerateObject(
       // is false, no extra keys beyond named properties should be permitted.
       int32_t key_rule_id = CreatePropertyNamesKeyRule(spec.property_names, rule_name + "_name");
       int32_t value_rule_id = CreateRule(effective_additional, rule_name + "_" + effective_suffix);
-      additional_override = FormatOtherProperty(
+      additional_override = FormatOtherPropertyWithKeyCheck(
           RuleRef(key_rule_id),
           value_rule_id,
           rule_name,
@@ -3398,7 +3419,7 @@ int32_t JSONSchemaConverter::GenerateObject(
               CreateRule(pattern_property.schema, rule_name + "_" + pattern_suffix);
           property_choices.push_back(Sequence(
               {beginning_separator,
-               FormatOtherProperty(
+               FormatOtherPropertyWithKeyCheck(
                    RuleRef(key_rule_id),
                    value_rule_id,
                    rule_name,
@@ -3420,7 +3441,7 @@ int32_t JSONSchemaConverter::GenerateObject(
         }
         property_choices.push_back(Sequence(
             {beginning_separator,
-             FormatOtherProperty(
+             FormatOtherPropertyWithKeyCheck(
                  RuleRef(key_rule_id),
                  value_rule_id,
                  rule_name,
@@ -3463,7 +3484,7 @@ int32_t JSONSchemaConverter::GenerateObject(
     // Case 3: no properties defined, additional properties allowed
     if (spec.max_properties != 0) {
       int32_t value_rule_id = CreateRule(additional_property, rule_name + "_" + additional_suffix);
-      int32_t property = FormatOtherProperty(
+      int32_t property = FormatOtherPropertyWithKeyCheck(
           KeyPatternExpression(), value_rule_id, rule_name, additional_suffix, additional_property
       );
       content = Sequence(
@@ -3494,7 +3515,12 @@ int32_t JSONSchemaConverter::GenerateObject(
     int32_t empty_content = any_whitespace_ ? WhitespaceExpression() : Empty();
     int32_t empty_result =
         need_braces ? Sequence({ByteString("{"), empty_content, ByteString("}")}) : empty_content;
-    return has_content ? Choice({result, empty_result}) : empty_result;
+    result = has_content ? Choice({result, empty_result}) : empty_result;
+  }
+  if (any_order_) {
+    const int32_t object_rule = builder_.AddRuleWithHint(rule_name + "_keys", result);
+    builder_.UpdateObjectKeyInfo(object_rule, {-1, true, {}});
+    return RuleRef(object_rule);
   }
   return result;
 }
@@ -4165,12 +4191,19 @@ int32_t XMLToolCallingConverter::FormatOtherProperty(
            FormatDeepSeekParamSuffix(schema, value_rule_id)}
       );
     }
+    int32_t key_suffix = XMLKeySuffix(
+        json_format_ == JSONFormat::kKimiK3XML ? GetRenderedJSONType(schema) : std::nullopt
+    );
+    if (any_order_ && json_format_ == JSONFormat::kQwenXML) {
+      // FormatOtherPropertyWithKeyCheck just created this exclusive key wrapper.
+      // Its name can finish at many prefixes, but every occurrence must next see '>'.
+      int32_t key_rule_id = builder_.GetGrammarExpr(key_pattern_expr)[0];
+      builder_.UpdateLookaheadAssertion(key_rule_id, Sequence({key_suffix}));
+    }
     std::vector<int32_t> elements = {
         ByteString(xml_wrapper_.key_wrapper_prefix),
         key_pattern_expr,
-        XMLKeySuffix(
-            json_format_ == JSONFormat::kKimiK3XML ? GetRenderedJSONType(schema) : std::nullopt
-        )
+        key_suffix
     };
     if (!xml_wrapper_.value_wrapper_prefix.empty()) {
       elements.push_back(WhitespaceExpression());

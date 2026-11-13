@@ -126,6 +126,28 @@ def test_fill_next_token_bitmask(
         assert rejected_sizes[-1] == expected_rejected_sizes[-1]
 
 
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_rejected_suffix_token_does_not_prune_a_valid_token(dynamic):
+    info = xgr.TokenizerInfo(["a0", "a0x", "aba0", "<eos>"], stop_token_ids=[3])
+    compiled = xgr.GrammarCompiler(info, enable_dynamic_compilation=dynamic).compile_grammar(
+        'root ::= "aba0"'
+    )
+    for grammar in (
+        compiled,
+        xgr.CompiledGrammar.deserialize_json(compiled.serialize_json(), info),
+    ):
+        matcher = xgr.GrammarMatcher(grammar)
+        mask = xgr.allocate_token_bitmask(1, info.vocab_size)
+        for _ in range(2):
+            matcher.fill_next_token_bitmask(mask)
+            for token_id in range(3):
+                allowed = bool(int(mask[0, token_id // 32]) & (1 << (token_id % 32)))
+                assert allowed == matcher.fork().accept_token(token_id) == (token_id == 2)
+        assert matcher.accept_token(2)
+        assert matcher.accept_token(3)
+        assert matcher.is_terminated()
+
+
 def test_token_operations():
     """Test accepting token and finding the next token mask."""
     vocab = [

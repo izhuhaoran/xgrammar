@@ -12,11 +12,13 @@
 #include <optional>
 #include <ostream>
 #include <queue>
+#include <tuple>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "grammar_impl.h"
+#include "object_key_context.h"
 #include "support/compact_2d_array.h"
 #include "support/utils.h"
 #include "xgrammar/grammar.h"
@@ -54,7 +56,8 @@ struct ParserState {
       const int32_t& repeat_count = 0,
       const int32_t& partial_codepoint = 0,
       const int32_t& active_temperature_rule_id = -1,
-      const int32_t& char_budget_deadline = -1
+      const int32_t& char_budget_deadline = -1,
+      const int32_t& object_key_context = 0
   )
       : rule_id(rule_id),
         sequence_id(sequence_id),
@@ -65,7 +68,8 @@ struct ParserState {
         repeat_count(repeat_count),
         partial_codepoint(partial_codepoint),
         active_temperature_rule_id(active_temperature_rule_id),
-        char_budget_deadline(char_budget_deadline) {}
+        char_budget_deadline(char_budget_deadline),
+        object_key_context(object_key_context) {}
 
   /*!
    * \brief A rule_start_pos value of kNoPrevInputPos means this ParserState is the root of the
@@ -109,6 +113,9 @@ struct ParserState {
    * character budget expires; -1 means unlimited. Stored as an absolute input position. */
   int32_t char_budget_deadline = -1;
 
+  /*! \brief Persistent any-order object state; zero is the ordinary parsing path. */
+  int32_t object_key_context = 0;
+
   /*!
    * \brief Lexicographic order over all fields. It is only used to sort the states for
    * deterministic serialization, and is not needed during parsing.
@@ -127,7 +134,10 @@ struct ParserState {
     if (active_temperature_rule_id != other.active_temperature_rule_id) {
       return active_temperature_rule_id < other.active_temperature_rule_id;
     }
-    return char_budget_deadline < other.char_budget_deadline;
+    if (char_budget_deadline != other.char_budget_deadline) {
+      return char_budget_deadline < other.char_budget_deadline;
+    }
+    return object_key_context < other.object_key_context;
   }
 
   friend std::ostream& operator<<(std::ostream& os, const ParserState& state) {
@@ -156,6 +166,8 @@ struct ParserState {
     if (char_budget_deadline != -1) {
       result += ", char_budget_deadline=" + std::to_string(char_budget_deadline);
     }
+    if (object_key_context != 0)
+      result += ", object_key_context=" + std::to_string(object_key_context);
     result += ")";
     return result;
   }
@@ -172,7 +184,8 @@ XGRAMMAR_MEMBER_ARRAY(
     &ParserState::repeat_count,
     &ParserState::partial_codepoint,
     &ParserState::active_temperature_rule_id,
-    &ParserState::char_budget_deadline
+    &ParserState::char_budget_deadline,
+    &ParserState::object_key_context
 );
 
 /*!
@@ -183,7 +196,9 @@ XGRAMMAR_MEMBER_ARRAY(
 class StateHashForCache {
  public:
   size_t operator()(const ParserState& state) const {
-    return HashCombine(state.rule_id, state.sequence_id, state.element_id, state.sub_element_id);
+    const auto hash =
+        HashCombine(state.rule_id, state.sequence_id, state.element_id, state.sub_element_id);
+    return state.object_key_context < 0 ? HashCombine(hash, true) : hash;
   }
 };
 
@@ -195,7 +210,8 @@ class StateEqualForCache {
  public:
   bool operator()(const ParserState& lhs, const ParserState& rhs) const {
     return lhs.rule_id == rhs.rule_id && lhs.sequence_id == rhs.sequence_id &&
-           lhs.element_id == rhs.element_id && lhs.sub_element_id == rhs.sub_element_id;
+           lhs.element_id == rhs.element_id && lhs.sub_element_id == rhs.sub_element_id &&
+           (lhs.object_key_context < 0) == (rhs.object_key_context < 0);
   }
 };
 
@@ -212,7 +228,8 @@ class StateEqualForParsing {
            lhs.partial_codepoint == rhs.partial_codepoint &&
            lhs.budget_deadline == rhs.budget_deadline &&
            lhs.active_temperature_rule_id == rhs.active_temperature_rule_id &&
-           lhs.char_budget_deadline == rhs.char_budget_deadline;
+           lhs.char_budget_deadline == rhs.char_budget_deadline &&
+           lhs.object_key_context == rhs.object_key_context;
   }
 };
 
@@ -233,7 +250,8 @@ class StateHashForParsing {
         state.partial_codepoint,
         state.budget_deadline,
         state.active_temperature_rule_id,
-        state.char_budget_deadline
+        state.char_budget_deadline,
+        state.object_key_context
     );
   }
 };
@@ -325,6 +343,19 @@ class EarleyParser {
 
   /*! \brief The grammar to be parsed. */
   Grammar grammar_;
+
+  bool has_object_keys_ = false;
+  std::optional<ObjectKeyContext> object_key_contexts_;
+  // -2 marks an object; nonnegative entries are interned declared property names.
+  std::vector<int32_t> object_key_codes_;
+  bool tmp_object_key_check_entered_ = false;
+  std::vector<bool> object_key_check_history_;
+
+  int32_t EnterObjectKeyRule(const ParserState& parent, int32_t rule_id);
+  void RecordObjectKeyRow();
+  bool HasEnteredObjectKeyCheck() const {
+    return !object_key_check_history_.empty() && object_key_check_history_.back();
+  }
 
   /*! \brief In this round of advancing, check if the stop token can be accepted. */
   bool tmp_accept_stop_token_ = false;
@@ -520,7 +551,7 @@ class EarleyParser {
    * current row. Committed-shortest matching: their remaining states are removed when the row is
    * finalized, so the occurrence cannot be extended further.
    */
-  std::vector<std::pair<int32_t, int32_t>> tmp_completed_lazy_occurrences_;
+  std::vector<std::tuple<int32_t, int32_t, int32_t>> tmp_completed_lazy_occurrences_;
 
   /*! \brief Remove the states of the lazy occurrences completed in the current row. */
   void RemoveCommittedLazyStates();
@@ -561,7 +592,7 @@ class EarleyParser {
   std::pair<bool, bool> Predict(const ParserState& state, bool debug_print = false);
 
   /*! \brief The initial state expanded from the root rule of the grammar. */
-  ParserState RootInitialState() const;
+  ParserState RootInitialState();
 
   /*! \brief Resolve the active temperature rule when entering a rule. */
   int32_t ResolveActiveTemperatureRule(int32_t rule_id, int32_t inherited_rule_id) const;
@@ -636,7 +667,7 @@ class EarleyParser {
    * \brief Scan a token edge: check if token_id matches any kToken or kExcludeToken edge from
    * state.
    */
-  void ScanAtomicToken(const ParserState& state, int32_t token_id);
+  void ScanAtomicToken(const ParserState& state, int32_t token_id, const std::string* token_bytes);
 
   /*!
    * \brief Advance the parser by accepting a whole token via kToken/kExcludeToken edges.
@@ -644,7 +675,12 @@ class EarleyParser {
    * \param debug_print Whether to print debug info.
    * \return True if any state advanced, false otherwise.
    */
-  bool AdvanceAtomicToken(int32_t token_id, bool debug_print = false, int32_t token_char_count = 0);
+  bool AdvanceAtomicToken(
+      int32_t token_id,
+      bool debug_print = false,
+      int32_t token_char_count = 0,
+      const std::string* token_bytes = nullptr
+  );
 
   /*!
    * \brief Find the latest of the last num_rows rows (row i holds the states after the first i
@@ -750,6 +786,7 @@ class EarleyParser {
     rule_id_to_completable_states_.PushBack(std::vector<std::pair<int32_t, ParserState>>());
     is_completed_.push_back(completed);
     scanable_state_history_.PushBack(states);
+    RecordObjectKeyRow();
     if (capture_tracking_) {
       capture_event_history_.PushBack(std::vector<CaptureEvent>());
     }

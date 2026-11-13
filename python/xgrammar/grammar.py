@@ -271,11 +271,11 @@ class Grammar(XGRObject):
 
             - False: properties follow the schema's declared order, fully validated (required
               keys present, no duplicates).
-            - True: properties may appear in any order; only key validity and each key's value
-              schema are enforced. Key presence and uniqueness are not checked, so required keys
-              may be missing and keys may repeat. The entry count is bounded to
-              ``[max(minProperties, n_required), maxProperties]`` (unbounded when maxProperties
-              is unset).
+            - True: properties may appear in any order, and duplicate logical names are rejected.
+              JSON key escapes are decoded for comparison; names are not Unicode-normalized.
+              Required key presence retains the existing count-based behavior and may be
+              incomplete. Existing property-count checks, including minProperties and
+              maxProperties, continue to apply.
 
             Applies to every object, nested included.
 

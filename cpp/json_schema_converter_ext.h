@@ -112,6 +112,10 @@ class XMLToolCallingConverter : public JSONSchemaConverter {
   int32_t GenerateEnum(const EnumSpec& spec, const std::string& rule_name) override;
 
   // Override format hooks
+  bool JSONEncodedKey() const override { return nested_object_level_ > 1; }
+  std::string ObjectKeyIdentity(const std::string& key) const override {
+    return nested_object_level_ > 1 ? key : EscapeAttrValue(key);
+  }
   int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr& schema) override;
   int32_t FormatProperty(
       const std::string& key,
@@ -212,6 +216,8 @@ class CohereXMLToolCallingConverter : public XMLToolCallingConverter {
   );
 
  protected:
+  bool JSONEncodedKey() const override { return !InCohereValueContext(); }
+  std::string ObjectKeyIdentity(const std::string& key) const override;
   int32_t GenerateString(const StringSpec& spec, const std::string& rule_name) override;
   int32_t GenerateObject(
       const ObjectSpec& spec, const std::string& rule_name, bool dummy_need_braces = false
@@ -323,6 +329,7 @@ class GemmaToolCallingConverter : public JSONSchemaConverter {
   static const std::string kGemmaStringDelim;
 
  protected:
+  bool JSONEncodedKey() const override { return false; }
   int32_t GenerateString(const StringSpec& spec, const std::string& rule_name) override;
   int32_t GenerateConst(const ConstSpec& spec, const std::string& rule_name) override;
   int32_t GenerateEnum(const EnumSpec& spec, const std::string& rule_name) override;

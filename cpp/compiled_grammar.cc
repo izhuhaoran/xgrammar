@@ -68,7 +68,8 @@ bool IsPlainCharacterClassRule(const Grammar& grammar, int32_t rule_id, ByteSet*
   const auto& rule = grammar->GetRule(rule_id);
   if (rule_id == grammar->GetRootRuleId() || rule.lookahead_assertion_id != -1 ||
       rule.max_tokens >= 0 || rule.max_chars >= 0 || !rule.capture_name.empty() || rule.is_lazy ||
-      rule.temperature.has_value() || grammar->GetSuffixStopInfo(rule_id) != nullptr) {
+      rule.temperature.has_value() || grammar->GetSuffixStopInfo(rule_id) != nullptr ||
+      grammar->GetObjectKeyInfo(rule_id) != nullptr) {
     return false;
   }
   const auto body = UnwrapSingleElement(grammar, grammar->GetGrammarExpr(rule.body_expr_id));
@@ -276,6 +277,112 @@ RepetitionTokenClass ClassifyRepetitionToken(
 
 }  // namespace
 
+std::vector<uint8_t> FindObjectKeyCompletionRules(const Grammar& grammar) {
+  if (!grammar->HasObjectKeys()) return {};
+  struct Returns {
+    std::unordered_map<int, std::vector<int>> zero_parents, children;
+    std::unordered_map<int, uint8_t> checks;
+    std::vector<int> ends;
+    int start;
+    std::vector<std::pair<int, int>> callers;
+  };
+  struct Pending {
+    int rule, state;
+    uint8_t checks;
+  };
+  std::vector<Returns> returns(grammar->NumRules());
+  std::vector<Pending> pending;
+  std::vector<uint8_t> sensitive(grammar->NumRules(), 0);
+  std::vector<bool> nullable(grammar->NumRules(), false);
+  std::vector<bool> changes_keys(grammar->NumRules(), false);
+  std::vector<int> changed;
+  for (int32_t rule : grammar->allow_empty_rule_ids) nullable[rule] = true;
+  auto mark_state = [&](int rule, int state, uint8_t checks) {
+    auto& previous = returns[rule].checks[state];
+    const uint8_t added = checks & ~previous;
+    if (added) {
+      previous |= added;
+      pending.push_back({rule, state, added});
+    }
+  };
+  auto mark_rule = [&](int rule, uint8_t checks) {
+    const uint8_t added = checks & ~sensitive[rule];
+    if (!added) return;
+    sensitive[rule] |= added;
+    for (int end : returns[rule].ends) mark_state(rule, end, added);
+  };
+  for (int rule = 0; rule < grammar->NumRules(); ++rule) {
+    const auto& fsm = grammar->per_rule_fsms[rule]->GetFsm();
+    auto& graph = returns[rule];
+    graph.start = fsm.GetStart();
+    std::unordered_set<int> reachable;
+    fsm.GetReachableStates(&reachable);
+    for (int state : reachable) {
+      if (fsm.IsEndState(state)) graph.ends.push_back(state);
+      for (const auto& edge : fsm.GetFsm().GetEdges(state)) {
+        int child = -1;
+        bool empty = edge.IsEpsilon();
+        if (edge.IsRuleRef()) {
+          child = edge.GetRefRuleId();
+          empty = nullable[child];
+        }
+        if (edge.IsRepeatRef()) {
+          const auto info = grammar->complete_fsm.GetRepeatEdgeInfo(edge.GetAuxIndex());
+          child = info.RuleId();
+          empty = info.Lower() == 0 || nullable[child];
+        }
+        if (empty) graph.zero_parents[edge.target].push_back(state);
+        if (child >= 0) {
+          graph.children[edge.target].push_back(child);
+          returns[child].callers.emplace_back(rule, state);
+          const auto* info = grammar->GetObjectKeyInfo(child);
+          if (info && !info->object && !changes_keys[rule]) {
+            changes_keys[rule] = true;
+            changed.push_back(rule);
+          }
+          if (info && !info->object && (info->key_codec == 0 || nullable[child])) {
+            mark_state(rule, state, kCheckObjectContext);
+          }
+        }
+      }
+    }
+  }
+  // A nested object has its own key set. Ordinary schema value rules cannot
+  // invalidate the enclosing property's entry check; only unscoped key rules can.
+  while (!changed.empty()) {
+    const int rule = changed.back();
+    changed.pop_back();
+    const auto* info = grammar->GetObjectKeyInfo(rule);
+    if (info && info->object) continue;
+    for (const auto& [parent, state] : returns[rule].callers) {
+      if (!changes_keys[parent]) {
+        changes_keys[parent] = true;
+        changed.push_back(parent);
+      }
+    }
+  }
+  for (int rule = 0; rule < grammar->NumRules(); ++rule) {
+    const auto* info = grammar->GetObjectKeyInfo(rule);
+    if (info && !info->object) {
+      if (info->key_codec != 0)
+        mark_rule(rule, kFinishDynamicKey);
+      else if (changes_keys[rule])
+        mark_rule(rule, kCheckObjectContext);
+    }
+  }
+  while (!pending.empty()) {
+    const auto [rule, state, checks] = pending.back();
+    pending.pop_back();
+    auto& graph = returns[rule];
+    if (state == graph.start) {
+      for (const auto& [parent, source] : graph.callers) mark_state(parent, source, checks);
+    }
+    for (int parent : graph.zero_parents[state]) mark_state(rule, parent, checks);
+    for (int child : graph.children[state]) mark_rule(child, checks);
+  }
+  return sensitive;
+}
+
 void PopulateRepeatInteriorBitsets(
     const Grammar& grammar,
     const TokenizerInfo& tokenizer_info,
@@ -288,7 +395,8 @@ void PopulateRepeatInteriorBitsets(
     mask.repeat_interior_char_counts.clear();
     mask.repeat_interior_bitsets.clear();
     mask.repeat_exit_tokens.clear();
-    if (state.rule_id < 0 || !counted_repetition_bodies[state.rule_id].has_value()) {
+    if (state.rule_id < 0 || state.object_key_context < 0 ||
+        !counted_repetition_bodies[state.rule_id].has_value()) {
       continue;
     }
     const auto& fsm = grammar->per_rule_fsms[state.rule_id]->GetFsm();
@@ -554,6 +662,7 @@ std::optional<SerializationError> DeserializeJSONValue(
     );
   }
   impl->tokenizer_info = tokenizer_info;
+  impl->object_key_completion_rules = FindObjectKeyCompletionRules(impl->grammar);
   if (object.find("adaptive_token_mask_cache") == object.end()) {
     return ConstructDeserializeError("Expect a 'adaptive_token_mask_cache' field", type_name);
   }
@@ -604,6 +713,7 @@ std::size_t MemorySize(const CompiledGrammar::Impl& impl) {
     lock.lock();
   }
   return MemorySize(impl.grammar) + MemorySize(impl.adaptive_token_mask_cache) +
+         MemorySize(impl.object_key_completion_rules) +
          MemorySize(impl.tag_dispatch_rule_id_to_second_slicing_bitset);
 }
 

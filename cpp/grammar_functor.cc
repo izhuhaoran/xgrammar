@@ -74,6 +74,9 @@ class SubGrammarAdderImpl : public GrammarMutator {
       builder_->UpdateMaxTokens(new_rule_ids_names[i].first, rule.max_tokens);
       builder_->UpdateMaxChars(new_rule_ids_names[i].first, rule.max_chars);
       builder_->UpdateCaptureName(new_rule_ids_names[i].first, rule.capture_name);
+      if (const auto* key = base_grammar_->GetObjectKeyInfo(i)) {
+        builder_->UpdateObjectKeyInfo(new_rule_ids_names[i].first, *key);
+      }
       if (const auto* suffix_stop_info = base_grammar_->GetSuffixStopInfo(i)) {
         auto remapped_info = *suffix_stop_info;
         if (remapped_info.body_rule_id >= 0) {
@@ -291,6 +294,9 @@ class StructureNormalizerImpl : public GrammarMutator {
       builder_->UpdateMaxTokens(i, rule.max_tokens);
       builder_->UpdateMaxChars(i, rule.max_chars);
       builder_->UpdateCaptureName(i, rule.capture_name);
+      if (const auto* key = base_grammar_->GetObjectKeyInfo(i)) {
+        builder_->UpdateObjectKeyInfo(i, *key);
+      }
       if (const auto* suffix_stop_info = base_grammar_->GetSuffixStopInfo(i)) {
         builder_->UpdateSuffixStopInfo(i, *suffix_stop_info);
       }
@@ -808,7 +814,7 @@ class RuleInlinerImpl : public InPlaceGrammarRewriter {
     // Inlining a temperature rule would erase the rule its sampling temperature applies to.
     if (rule.max_tokens >= 0 || rule.max_chars >= 0 || !rule.capture_name.empty() ||
         (*grammar_)->GetSuffixStopInfo(rule_id) != nullptr || rule.is_lazy ||
-        rule.temperature.has_value()) {
+        rule.temperature.has_value() || (*grammar_)->GetObjectKeyInfo(rule_id) != nullptr) {
       can_rule_be_inlined_[rule_id] = false;
       return false;
     }
@@ -930,6 +936,9 @@ class DeadCodeEliminatorImpl : public GrammarMutator {
       builder_->UpdateMaxTokens(rule_id_map_[rule_id], rule.max_tokens);
       builder_->UpdateMaxChars(rule_id_map_[rule_id], rule.max_chars);
       builder_->UpdateCaptureName(rule_id_map_[rule_id], rule.capture_name);
+      if (const auto* key = grammar->GetObjectKeyInfo(rule_id)) {
+        builder_->UpdateObjectKeyInfo(rule_id_map_[rule_id], *key);
+      }
       if (const auto* suffix_stop_info = grammar->GetSuffixStopInfo(rule_id)) {
         auto remapped_info = *suffix_stop_info;
         if (remapped_info.body_rule_id >= 0) {
@@ -2053,7 +2062,8 @@ class RegularGrammarFSMBuilder {
     }
     if (rule.lookahead_assertion_id >= 0 || rule.max_tokens >= 0 || rule.max_chars >= 0 ||
         !rule.capture_name.empty() || rule.is_lazy || rule.temperature.has_value() ||
-        grammar_->GetSuffixStopInfo(rule_id) != nullptr) {
+        grammar_->GetSuffixStopInfo(rule_id) != nullptr ||
+        grammar_->GetObjectKeyInfo(rule_id) != nullptr) {
       return Fail("annotated rule " + rule.name + " is not a plain regular rule");
     }
     int entry = AddState();
@@ -2401,7 +2411,7 @@ int32_t RepetitionRangeExpanderImpl::HandleRepetitionRange(
   // the rule's content would erase the rule that the runtime semantics apply to.
   if (ref_rule.max_tokens < 0 && ref_rule.max_chars < 0 &&
       base_grammar_->GetSuffixStopInfo(rule_id) == nullptr && !ref_rule.is_lazy &&
-      !ref_rule.temperature.has_value() &&
+      !ref_rule.temperature.has_value() && base_grammar_->GetObjectKeyInfo(rule_id) == nullptr &&
       ref_rule_body.type == GrammarBuilder::GrammarExprType::kChoices &&
       ref_rule_body.size() == 1) {
     const auto& ref_choice = base_grammar_->GetGrammarExpr(ref_rule_body[0]);
@@ -2629,6 +2639,9 @@ class LazyBodyFlattenerImpl : public GrammarMutator {
       builder_->UpdateMaxTokens(i, rule.max_tokens);
       builder_->UpdateMaxChars(i, rule.max_chars);
       builder_->UpdateCaptureName(i, rule.capture_name);
+      if (const auto* key = base_grammar_->GetObjectKeyInfo(i)) {
+        builder_->UpdateObjectKeyInfo(i, *key);
+      }
       if (const auto* suffix_stop_info = base_grammar_->GetSuffixStopInfo(i)) {
         builder_->UpdateSuffixStopInfo(i, *suffix_stop_info);
       }
@@ -3322,6 +3335,7 @@ class GrammarFSMHasherImpl {
   static constexpr int16_t kSimpleCycleFlag = -0x400;
   static constexpr int16_t kUnKnownFlag = -0x500;
   static constexpr int16_t kLazyFlag = -0x600;
+  static constexpr int16_t kObjectKeyFlag = -0x700;
 
  private:
   Grammar* grammar_;
@@ -3637,6 +3651,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashFsm(int fsm_index, bool allow_
                                    int32_t target,
                                    std::optional<std::pair<int32_t, int32_t>> bounds) {
       auto with_bounds = [&](uint64_t hash) {
+        if ((*grammar_)->GetObjectKeyInfo(ref_rule_id))
+          hash = HashCombineMixed(hash, kObjectKeyFlag);
         return bounds.has_value() ? HashCombineMixed(hash, bounds->first, bounds->second) : hash;
       };
       if (ref_rule_id == fsm_index) {
@@ -3734,6 +3750,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashFsm(int fsm_index, bool allow_
     new_id_mapping.emplace_back(original_state_id, new_state_id);
   }
   grammar_->ImplPtr()->per_rule_fsm_new_state_ids[fsm_index] = new_id_mapping;
+  if ((*grammar_)->GetObjectKeyInfo(fsm_index))
+    hash_result = HashCombineMixed(hash_result, kObjectKeyFlag);
   // A lazy rule has other token masks than the same fsm without it.
   if ((*grammar_)->GetRule(fsm_index).is_lazy) {
     hash_result = HashCombineMixed(hash_result, kLazyFlag);

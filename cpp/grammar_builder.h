@@ -253,6 +253,8 @@ class GrammarBuilder {
   /*! \brief Set or clear sparse suffix/stop metadata on the rule referred by name. */
   void UpdateSuffixStopInfo(std::string rule_name, const SuffixStopInfo& info);
 
+  void UpdateObjectKeyInfo(int32_t rule_id, const Grammar::Impl::ObjectKeyInfo& info);
+
   /*! \brief Set whether the rule referred by the given rule_id is lazy (committed-shortest). */
   void UpdateLazy(int32_t rule_id, bool is_lazy);
 

@@ -25,6 +25,32 @@ using GrammarExpr = Grammar::Impl::GrammarExpr;
 
 bool EarleyParser::IsCompleted() const { return is_completed_.back(); }
 
+int32_t EarleyParser::EnterObjectKeyRule(const ParserState& parent, int32_t rule_id) {
+  if (!has_object_keys_) return 0;
+  if (!object_key_contexts_) {
+    if (grammar_->GetObjectKeyInfo(rule_id)) tmp_object_key_check_entered_ = true;
+    return 0;
+  }
+  const int32_t code = object_key_codes_[rule_id];
+  if (code == -1 && parent.object_key_context == 0) return 0;
+  return object_key_contexts_->Enter(
+      parent.object_key_context,
+      rule_id,
+      rule_id_to_completable_states_.size() - 1,
+      code == -2,
+      code
+  );
+}
+
+void EarleyParser::RecordObjectKeyRow() {
+  if (!has_object_keys_) return;
+  if (object_key_contexts_) {
+    object_key_contexts_->Mark(scanable_state_history_.size() - 1);
+  } else {
+    object_key_check_history_.push_back(tmp_object_key_check_entered_);
+  }
+}
+
 bool EarleyParser::CompletionConsumedMarker(const ParserState& state) const {
   const auto& body = grammar_->GetGrammarExpr(grammar_->GetRule(state.rule_id).body_expr_id);
   if (body.type != GrammarExprType::kTagDispatch) {
@@ -112,6 +138,12 @@ void EarleyParser::PopLastStates(int32_t cnt) {
   rule_id_to_completable_states_.PopBack(cnt);
   is_completed_.erase(is_completed_.end() - cnt, is_completed_.end());
   scanable_state_history_.PopBack(cnt);
+  if (has_object_keys_) {
+    if (object_key_contexts_)
+      object_key_contexts_->Rollback(scanable_state_history_.size() - 1);
+    else
+      object_key_check_history_.resize(object_key_check_history_.size() - cnt);
+  }
   if (capture_tracking_) {
     capture_event_history_.PopBack(cnt);
   }
@@ -123,14 +155,41 @@ void EarleyParser::PopLastStates(int32_t cnt) {
   }
 }
 
-void EarleyParser::Complete(const ParserState& state, bool debug_print, bool marker_present) {
+void EarleyParser::Complete(const ParserState& input, bool debug_print, bool marker_present) {
+  auto state = input;
+  bool defer_lazy_commit = false;
+  if (has_object_keys_ && state.rule_id >= 0) {
+    if (object_key_contexts_) {
+      if (object_key_codes_[state.rule_id] >= 0) {
+        state.object_key_context = object_key_contexts_->CompleteDeclaredKey(
+            state.object_key_context, object_key_codes_[state.rule_id]
+        );
+        if (state.object_key_context == ObjectKeyContext::kRejected) return;
+      } else if (object_key_codes_[state.rule_id] <= -3) {
+        state.object_key_context = object_key_contexts_->CompleteKey(state.object_key_context);
+        if (state.object_key_context == ObjectKeyContext::kRejected) return;
+      }
+    } else if (const auto* info = grammar_->GetObjectKeyInfo(state.rule_id);
+               info && !info->object &&
+               (state.rule_start_pos != ParserState::kNoPrevInputPos ||
+                (info->key_codec != 0 && state.object_key_context < 0 &&
+                 grammar_->GetRule(state.rule_id).is_lazy))) {
+      // A key guard may reject this short lazy match and leave a longer match alive.
+      // Cache construction has no seen set, including at its completion-sensitive root.
+      tmp_object_key_check_entered_ = true;
+      defer_lazy_commit = info->key_codec != 0;
+    }
+  }
   // Record capture and hidden-span events. This is only enabled during definitive advances;
   // speculative completions (mask computation, lookahead) never record events.
   if (capture_recording_ && RuleNeedsCaptureEvent(state.rule_id)) {
     RecordCaptureEvent(state, marker_present);
   }
-  if (state.rule_id != -1 && grammar_->GetRule(state.rule_id).is_lazy) {
-    tmp_completed_lazy_occurrences_.emplace_back(state.rule_id, state.rule_start_pos);
+  if (state.rule_id != -1 && grammar_->GetRule(state.rule_id).is_lazy && !defer_lazy_commit) {
+    // Key completion may change the current scope; the occurrence keeps its entry identity.
+    const int32_t entry_scope =
+        object_key_contexts_ ? object_key_contexts_->EntryScope(input.object_key_context) : 0;
+    tmp_completed_lazy_occurrences_.emplace_back(state.rule_id, state.rule_start_pos, entry_scope);
   }
   // Check if a rule is completed.
   if (state.rule_start_pos == ParserState::kNoPrevInputPos) {
@@ -149,9 +208,22 @@ void EarleyParser::Complete(const ParserState& state, bool debug_print, bool mar
 
   // Check all the possible parent states.
   const auto& parent_states_map = rule_id_to_completable_states_[state.rule_start_pos];
-  for (const auto& [ref_id, parent_state] : parent_states_map) {
+  for (const auto& [ref_id, saved_parent] : parent_states_map) {
     if (ref_id != state.rule_id) {
       continue;
+    }
+    auto parent_state = saved_parent;
+    if (object_key_contexts_) {
+      if (!object_key_contexts_->CanReturn(
+              state.object_key_context, parent_state.object_key_context
+          )) {
+        continue;
+      }
+      parent_state.object_key_context = object_key_contexts_->Return(
+          state.object_key_context,
+          parent_state.object_key_context,
+          object_key_codes_[state.rule_id] == -2
+      );
     }
     XGRAMMAR_DCHECK(
         parent_state.rule_id == -1 || grammar_->per_rule_fsms[parent_state.rule_id].has_value()
@@ -175,7 +247,8 @@ void EarleyParser::Complete(const ParserState& state, bool debug_print, bool mar
             0,
             0,
             parent_state.active_temperature_rule_id,
-            parent_state.char_budget_deadline
+            parent_state.char_budget_deadline,
+            parent_state.object_key_context
         });
         continue;
       }
@@ -198,7 +271,8 @@ void EarleyParser::Complete(const ParserState& state, bool debug_print, bool mar
             0,
             0,
             parent_state.active_temperature_rule_id,
-            parent_state.char_budget_deadline
+            parent_state.char_budget_deadline,
+            parent_state.object_key_context
         });
       }
       // If the repeat count is less than the max repeat count, we can continue to
@@ -232,7 +306,8 @@ void EarleyParser::Complete(const ParserState& state, bool debug_print, bool mar
             0,
             0,
             parent_state.active_temperature_rule_id,
-            parent_state.char_budget_deadline
+            parent_state.char_budget_deadline,
+            parent_state.object_key_context
         });
       }
       if (new_count < info.Upper()) {
@@ -246,7 +321,8 @@ void EarleyParser::Complete(const ParserState& state, bool debug_print, bool mar
             new_count,
             0,
             parent_state.active_temperature_rule_id,
-            parent_state.char_budget_deadline
+            parent_state.char_budget_deadline,
+            parent_state.object_key_context
         });
       }
       break;
@@ -296,7 +372,8 @@ std::pair</* scanable */ bool, /* completable */ bool> EarleyParser::Predict(
             0,
             0,
             state.active_temperature_rule_id,
-            state.char_budget_deadline
+            state.char_budget_deadline,
+            state.object_key_context
         });
       }
       return std::make_pair(true, false);
@@ -319,7 +396,8 @@ std::pair</* scanable */ bool, /* completable */ bool> EarleyParser::Predict(
             0,
             0,
             state.active_temperature_rule_id,
-            state.char_budget_deadline
+            state.char_budget_deadline,
+            state.object_key_context
         });
       }
       return std::make_pair(false, false);
@@ -344,7 +422,11 @@ std::pair</* scanable */ bool, /* completable */ bool> EarleyParser::Predict(
   }
 }
 
-void EarleyParser::Scan(const ParserState& state, const uint8_t ch) {
+void EarleyParser::Scan(const ParserState& input, const uint8_t ch) {
+  auto state = input;
+  if (state.object_key_context < 0 && object_key_contexts_) {
+    state.object_key_context = object_key_contexts_->AdvanceKeyByte(state.object_key_context, ch);
+  }
   XGRAMMAR_DCHECK(state.rule_id == -1 || grammar_->per_rule_fsms[state.rule_id].has_value());
   if (state.rule_id == -1) {
     const auto& cur_rule = grammar_->GetGrammarExpr(state.sequence_id);
@@ -393,6 +475,7 @@ bool EarleyParser::Advance(const uint8_t ch, bool debug_print) {
   tmp_states_to_be_added_.clear();
   tmp_accept_stop_token_ = false;
   tmp_completed_lazy_occurrences_.clear();
+  tmp_object_key_check_entered_ = HasEnteredObjectKeyCheck();
   if (has_char_budget_rules_) {
     tmp_char_budget_entered_ = char_budget_entry_history_.back();
     char_count_history_.push_back(GetCurrentCharIndex() + StartsUTF8Codepoint(ch));
@@ -432,11 +515,19 @@ bool EarleyParser::Advance(const uint8_t ch, bool debug_print) {
   }
 
   // Check if the grammar is completed, and add the scannable states to the history.
+  if (object_key_contexts_ && tmp_states_to_be_added_.empty() && !tmp_accept_stop_token_) {
+    rule_id_to_completable_states_.PopBack(1);
+    if (capture_tracking_) capture_event_history_.PopBack(1);
+    if (has_char_budget_rules_) char_count_history_.pop_back();
+    object_key_contexts_->Rollback(scanable_state_history_.size() - 1);
+    return false;
+  }
   if (!tmp_completed_lazy_occurrences_.empty()) {
     RemoveCommittedLazyStates();
   }
   is_completed_.push_back(tmp_accept_stop_token_);
   scanable_state_history_.PushBack(tmp_states_to_be_added_);
+  RecordObjectKeyRow();
   if (has_char_budget_rules_) {
     char_budget_entry_history_.push_back(tmp_char_budget_entered_);
   }
@@ -445,8 +536,11 @@ bool EarleyParser::Advance(const uint8_t ch, bool debug_print) {
 
 void EarleyParser::RemoveCommittedLazyStates() {
   auto is_committed = [&](const ParserState& state) {
-    for (const auto& [rule_id, rule_start_pos] : tmp_completed_lazy_occurrences_) {
-      if (state.rule_id == rule_id && state.rule_start_pos == rule_start_pos) {
+    const int32_t entry_scope =
+        object_key_contexts_ ? object_key_contexts_->EntryScope(state.object_key_context) : 0;
+    for (const auto& [rule_id, rule_start_pos, committed_entry] : tmp_completed_lazy_occurrences_) {
+      if (state.rule_id == rule_id && state.rule_start_pos == rule_start_pos &&
+          entry_scope == committed_entry) {
         return true;
       }
     }
@@ -465,6 +559,21 @@ EarleyParser::EarleyParser(const Grammar& grammar, std::optional<ParserState> in
   if (!grammar->optimized) {
     XGRAMMAR_LOG(FATAL) << "The grammar is not optimized. Please optimize the grammar before using "
                            "the Earley parser.";
+  }
+  has_object_keys_ = grammar_->HasObjectKeys();
+  if (has_object_keys_ && !initial_state.has_value()) {
+    object_key_contexts_.emplace();
+    object_key_codes_.assign(grammar_->NumRules(), -1);
+    for (int32_t rule = 0; rule < grammar_->NumRules(); ++rule) {
+      const auto* info = grammar_->GetObjectKeyInfo(rule);
+      if (!info) continue;
+      if (info->object)
+        object_key_codes_[rule] = -2;
+      else if (info->key_codec != 0)
+        object_key_codes_[rule] = -2 - info->key_codec;
+      else
+        object_key_codes_[rule] = object_key_contexts_->InternKey(info->key);
+    }
   }
   for (int32_t i = 0; i < grammar_->NumRules(); ++i) {
     has_budget_rules_ = has_budget_rules_ || grammar_->GetRule(i).max_tokens >= 0;
@@ -527,7 +636,7 @@ uint8_t EarleyParser::InitializeFsmStateFlags(int32_t rule_id, int32_t state_id)
   return flags;
 }
 
-ParserState EarleyParser::RootInitialState() const {
+ParserState EarleyParser::RootInitialState() {
   const auto root_rule_id = grammar_->GetRootRuleId();
   XGRAMMAR_DCHECK(grammar_->per_rule_fsms[root_rule_id].has_value());
   return ParserState(
@@ -540,7 +649,15 @@ ParserState EarleyParser::RootInitialState() const {
       0,
       0,
       ResolveActiveTemperatureRule(root_rule_id, -1),
-      CharDeadlineForRule(root_rule_id, -1)
+      CharDeadlineForRule(root_rule_id, -1),
+      object_key_contexts_ ? object_key_contexts_->Enter(
+                                 0,
+                                 root_rule_id,
+                                 0,
+                                 object_key_codes_[root_rule_id] == -2,
+                                 object_key_codes_[root_rule_id]
+                             )
+                           : 0
   );
 }
 
@@ -570,6 +687,7 @@ void EarleyParser::PushStateAndExpand(const ParserState& state) {
   }
   is_completed_.push_back(tmp_accept_stop_token_);
   scanable_state_history_.PushBack(tmp_states_to_be_added_);
+  RecordObjectKeyRow();
   if (has_char_budget_rules_) {
     char_count_history_.push_back(GetCurrentCharIndex());
     char_budget_entry_history_.push_back(tmp_char_budget_entered_);
@@ -580,6 +698,17 @@ void EarleyParser::Reset() {
   rule_id_to_completable_states_.PopBack(rule_id_to_completable_states_.size());
   scanable_state_history_.PopBack(scanable_state_history_.size());
   is_completed_.clear();
+  if (object_key_contexts_) {
+    object_key_contexts_.emplace();
+    for (int32_t rule = 0; rule < grammar_->NumRules(); ++rule) {
+      if (object_key_codes_[rule] >= 0) {
+        const int32_t name = object_key_contexts_->InternKey(grammar_->GetObjectKeyInfo(rule)->key);
+        XGRAMMAR_DCHECK(name == object_key_codes_[rule]);
+      }
+    }
+  }
+  object_key_check_history_.clear();
+  tmp_object_key_check_entered_ = false;
   stop_token_is_accepted_ = false;
   if (capture_tracking_) {
     capture_event_history_.PopBack(capture_event_history_.size());
@@ -606,6 +735,8 @@ void EarleyParser::ExpandNextRuleRefElement(
       sub_grammar_expr->type == GrammarExprType::kRepeat
   );
   auto ref_rule_id = (*sub_grammar_expr)[0];
+  const int32_t key_context = EnterObjectKeyRule(state, ref_rule_id);
+  if (key_context == ObjectKeyContext::kRejected) return;
 
   if (debug_print) {
     XGRAMMAR_LOG(INFO) << "The rule " << state.rule_id << ": "
@@ -620,7 +751,9 @@ void EarleyParser::ExpandNextRuleRefElement(
   if (state.element_id != grammar_expr.size() - 1 ||
       sub_grammar_expr->type == GrammarExprType::kRepeat ||
       (state.rule_start_pos == rule_id_to_completable_states_.size() - 1) ||
-      RuleNeedsCaptureEvent(state.rule_id) || RuleNeedsCaptureEvent(ref_rule_id)) {
+      RuleNeedsCaptureEvent(state.rule_id) || RuleNeedsCaptureEvent(ref_rule_id) ||
+      (has_object_keys_ &&
+       (grammar_->GetObjectKeyInfo(state.rule_id) || grammar_->GetObjectKeyInfo(ref_rule_id)))) {
     // It's not the right recursion, or it's the root rule.
     rule_id_to_completable_states_.PushBackInLatestRow(std::make_pair(ref_rule_id, state));
   } else {
@@ -641,7 +774,18 @@ void EarleyParser::ExpandNextRuleRefElement(
       std::vector<std::pair<int32_t, ParserState>> to_added_states;
       for (const auto& parent_state_iter : parent_states_map) {
         if (parent_state_iter.first != state.rule_id) continue;
-        const auto& parent_state = parent_state_iter.second;
+        auto parent_state = parent_state_iter.second;
+        if (object_key_contexts_) {
+          // Apply the skipped parent's key effects to each compatible caller.
+          if (!object_key_contexts_->CanReturn(
+                  state.object_key_context, parent_state.object_key_context
+              )) {
+            continue;
+          }
+          parent_state.object_key_context = object_key_contexts_->Return(
+              state.object_key_context, parent_state.object_key_context, false
+          );
+        }
         if (!in_vec(parent_state)) {
           to_added_states.push_back({ref_rule_id, parent_state});
         }
@@ -652,7 +796,7 @@ void EarleyParser::ExpandNextRuleRefElement(
     }
   }
 
-  if (IsRuleNullable(ref_rule_id)) {
+  if (!has_object_keys_ && IsRuleNullable(ref_rule_id)) {
     XGRAMMAR_DCHECK(grammar_expr.type == GrammarExprType::kSequence);
     Enqueue(ParserState{
         state.rule_id,
@@ -664,7 +808,8 @@ void EarleyParser::ExpandNextRuleRefElement(
         0,
         0,
         state.active_temperature_rule_id,
-        state.char_budget_deadline
+        state.char_budget_deadline,
+        state.object_key_context
     });
   }
 
@@ -688,7 +833,8 @@ void EarleyParser::ExpandNextRuleRefElement(
       0,
       0,
       ResolveActiveTemperatureRule(ref_rule_id, state.active_temperature_rule_id),
-      CharDeadlineForRule(ref_rule_id, state.char_budget_deadline)
+      CharDeadlineForRule(ref_rule_id, state.char_budget_deadline),
+      key_context
   });
 }
 
@@ -709,7 +855,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
           0,
           0,
           state.active_temperature_rule_id,
-          state.char_budget_deadline
+          state.char_budget_deadline,
+          state.object_key_context
       });
       continue;
     }
@@ -739,7 +886,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
             0,
             0,
             state.active_temperature_rule_id,
-            state.char_budget_deadline
+            state.char_budget_deadline,
+            state.object_key_context
         });
       }
       if (state.repeat_count >= repeat_info.Upper()) {
@@ -748,6 +896,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
     } else {
       continue;
     }
+    const int32_t key_context = EnterObjectKeyRule(state, ref_rule_id);
+    if (key_context == ObjectKeyContext::kRejected) continue;
     bool right_recursion_to_root = false;
     if (debug_print) {
       XGRAMMAR_LOG(INFO) << "The rule " << state.rule_id << ": "
@@ -757,7 +907,9 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
     const uint8_t target_flags = GetFsmStateFlags(state.rule_id, target);
     if (!is_repeat && !(target_flags & kFsmStateHasEdges) && (target_flags & kFsmStateEnd) &&
         state.rule_start_pos != static_cast<int32_t>(rule_id_to_completable_states_.size() - 1) &&
-        !RuleNeedsCaptureEvent(state.rule_id) && !RuleNeedsCaptureEvent(ref_rule_id)) {
+        !RuleNeedsCaptureEvent(state.rule_id) && !RuleNeedsCaptureEvent(ref_rule_id) &&
+        (!has_object_keys_ || (!grammar_->GetObjectKeyInfo(state.rule_id) &&
+                               !grammar_->GetObjectKeyInfo(ref_rule_id)))) {
       // It's a right recursion. We can optimize it. The optimization elides the completion of
       // the parent rule, so it is disabled when either rule produces capture-history events.
       // If it's the right recursion, we need to add the ancestors of the parent state.
@@ -778,7 +930,18 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
         std::vector<std::pair<int32_t, ParserState>> to_added_states;
         for (const auto& parent_state_iter : parent_states_map) {
           if (parent_state_iter.first != state.rule_id) continue;
-          const auto& parent_state = parent_state_iter.second;
+          auto parent_state = parent_state_iter.second;
+          if (object_key_contexts_) {
+            // Apply the skipped parent's key effects to each compatible caller.
+            if (!object_key_contexts_->CanReturn(
+                    state.object_key_context, parent_state.object_key_context
+                )) {
+              continue;
+            }
+            parent_state.object_key_context = object_key_contexts_->Return(
+                state.object_key_context, parent_state.object_key_context, false
+            );
+          }
           if (!in_vec(parent_state)) {
             to_added_states.push_back({ref_rule_id, parent_state});
           }
@@ -802,7 +965,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
                  state.repeat_count,
                  0,
                  state.active_temperature_rule_id,
-                 state.char_budget_deadline
+                 state.char_budget_deadline,
+                 state.object_key_context
              }}
         );
       } else {
@@ -819,14 +983,15 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
                  0,
                  0,
                  state.active_temperature_rule_id,
-                 state.char_budget_deadline
+                 state.char_budget_deadline,
+                 state.object_key_context
              }}
         );
       }
     }
 
     // Check if the reference rule can be empty.
-    if (!is_repeat && IsRuleNullable(ref_rule_id)) {
+    if (!has_object_keys_ && !is_repeat && IsRuleNullable(ref_rule_id)) {
       Enqueue(ParserState{
           state.rule_id,
           state.sequence_id,
@@ -837,7 +1002,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
           0,
           0,
           state.active_temperature_rule_id,
-          state.char_budget_deadline
+          state.char_budget_deadline,
+          state.object_key_context
       });
     }
 
@@ -861,7 +1027,8 @@ void EarleyParser::ExpandNextRuleRefElementOnFSM(const ParserState& state, bool 
         0,
         0,
         ResolveActiveTemperatureRule(ref_rule_id, state.active_temperature_rule_id),
-        CharDeadlineForRule(ref_rule_id, state.char_budget_deadline)
+        CharDeadlineForRule(ref_rule_id, state.char_budget_deadline),
+        key_context
     });
   }
 }
@@ -1166,7 +1333,9 @@ void EarleyParser::AdvanceFsm(const ParserState& state, const uint8_t ch) {
   }
 }
 
-void EarleyParser::ScanAtomicToken(const ParserState& state, int32_t token_id) {
+void EarleyParser::ScanAtomicToken(
+    const ParserState& state, int32_t token_id, const std::string* token_bytes
+) {
   if (state.rule_id == -1) return;
   XGRAMMAR_DCHECK(grammar_->per_rule_fsms[state.rule_id].has_value());
   const auto& current_fsm = grammar_->per_rule_fsms[state.rule_id].value();
@@ -1181,6 +1350,13 @@ void EarleyParser::ScanAtomicToken(const ParserState& state, int32_t token_id) {
     }
     if (!matched) continue;
     auto new_state = state;
+    if (new_state.object_key_context < 0 && object_key_contexts_) {
+      if (token_bytes == nullptr) continue;
+      for (uint8_t byte : *token_bytes) {
+        new_state.object_key_context =
+            object_key_contexts_->AdvanceKeyByte(new_state.object_key_context, byte);
+      }
+    }
     new_state.element_id = edge.target;
     const uint8_t flags = GetFsmStateFlags(state.rule_id, edge.target);
     if (!(flags & kFsmStateNonTerminal) && !(flags & kFsmStateEnd) && (flags & kFsmStateScanable)) {
@@ -1192,7 +1368,7 @@ void EarleyParser::ScanAtomicToken(const ParserState& state, int32_t token_id) {
 }
 
 bool EarleyParser::AdvanceAtomicToken(
-    int32_t token_id, bool debug_print, int32_t token_char_count
+    int32_t token_id, bool debug_print, int32_t token_char_count, const std::string* token_bytes
 ) {
   XGRAMMAR_DCHECK(tmp_process_state_queue_.empty())
       << "The tmp_process_state_queue_ should be empty before AdvanceAtomicToken.";
@@ -1200,6 +1376,7 @@ bool EarleyParser::AdvanceAtomicToken(
   tmp_states_to_be_added_.clear();
   tmp_accept_stop_token_ = false;
   tmp_completed_lazy_occurrences_.clear();
+  tmp_object_key_check_entered_ = HasEnteredObjectKeyCheck();
   if (has_char_budget_rules_) {
     tmp_char_budget_entered_ = char_budget_entry_history_.back();
     char_count_history_.push_back(GetCurrentCharIndex() + token_char_count);
@@ -1209,7 +1386,7 @@ bool EarleyParser::AdvanceAtomicToken(
     if (skip_expired_states_ && IsExpiredState(state)) {
       continue;
     }
-    ScanAtomicToken(state, token_id);
+    ScanAtomicToken(state, token_id, token_bytes);
   }
   if (tmp_process_state_queue_.empty() && tmp_states_to_be_added_.empty()) {
     if (has_char_budget_rules_) {
@@ -1232,11 +1409,19 @@ bool EarleyParser::AdvanceAtomicToken(
       tmp_states_to_be_added_.push_back(state);
     }
   }
+  if (object_key_contexts_ && tmp_states_to_be_added_.empty() && !tmp_accept_stop_token_) {
+    rule_id_to_completable_states_.PopBack(1);
+    if (capture_tracking_) capture_event_history_.PopBack(1);
+    if (has_char_budget_rules_) char_count_history_.pop_back();
+    object_key_contexts_->Rollback(scanable_state_history_.size() - 1);
+    return false;
+  }
   if (!tmp_completed_lazy_occurrences_.empty()) {
     RemoveCommittedLazyStates();
   }
   is_completed_.push_back(tmp_accept_stop_token_);
   scanable_state_history_.PushBack(tmp_states_to_be_added_);
+  RecordObjectKeyRow();
   if (has_char_budget_rules_) {
     char_budget_entry_history_.push_back(tmp_char_budget_entered_);
   }

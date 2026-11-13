@@ -185,6 +185,10 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
     bool has_stop_capture = false;
     bool has_lazy = false;
     bool has_temperature = false;
+    bool has_object_keys = false;
+    bool has_object_key = false;
+    int32_t object_key_codec = 0;
+    std::string object_key;
     double temperature_value = 0;
     int64_t max_tokens_value = -1;
     int64_t max_chars_value = -1;
@@ -296,6 +300,15 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
         }
       } else if (!has_lazy && match_keyword("lazy")) {
         has_lazy = true;
+      } else if (object_key_codec == 0 && match_keyword("object_key_json")) {
+        object_key_codec = 1;
+      } else if (object_key_codec == 0 && match_keyword("object_key_raw")) {
+        object_key_codec = 2;
+      } else if (!has_object_keys && match_keyword("object_keys")) {
+        has_object_keys = true;
+      } else if (!has_object_key && match_keyword("object_key")) {
+        has_object_key = true;
+        matched = parse_string_value(&object_key);
       } else if (!has_temperature && match_keyword("temperature")) {
         has_temperature = true;
         matched = parse_float_value(&temperature_value);
@@ -381,6 +394,9 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
           static_cast<int32_t>(capture_hidden_marker_rule_id_value);
       token.stop_capture_name = stop_capture_value;
       token.is_lazy = has_lazy;
+      token.object_keys = has_object_keys;
+      token.object_key_codec = object_key_codec;
+      if (has_object_key) token.object_key = std::move(object_key);
       if (has_temperature) {
         token.temperature = static_cast<float>(temperature_value);
       }
@@ -689,6 +705,7 @@ class EBNFParser {
   struct ParsedRule {
     Rule rule;
     SuffixStopInfo suffix_stop_info;
+    std::optional<Grammar::Impl::ObjectKeyInfo> object_key_info;
   };
 
   // Parsing different parts of the grammar
@@ -1509,6 +1526,9 @@ EBNFParser::ParsedRule EBNFParser::ParseRule() {
   std::string stop_capture_name = Peek().stop_capture_name;
   bool is_lazy = Peek().is_lazy;
   std::optional<float> temperature = Peek().temperature;
+  const bool object_keys = Peek().object_keys;
+  const int32_t object_key_codec = Peek().object_key_codec;
+  const auto object_key = Peek().object_key;
   Consume();
 
   PeekAndConsume(TokenType::Assign, "Expect ::=");
@@ -1527,6 +1547,10 @@ EBNFParser::ParsedRule EBNFParser::ParseRule() {
   result.rule.capture_name = capture_name;
   result.rule.is_lazy = is_lazy;
   result.rule.temperature = temperature;
+  if (object_keys || object_key.has_value() || object_key_codec != 0) {
+    result.object_key_info =
+        Grammar::Impl::ObjectKeyInfo{-1, object_keys, object_key.value_or(""), object_key_codec};
+  }
   result.suffix_stop_info.hidden_suffix_bytes = capture_hidden_suffix_bytes;
   result.suffix_stop_info.hidden_stop_bytes = capture_hidden_stop_bytes;
   result.suffix_stop_info.body_rule_id = capture_hidden_body_rule_id;
@@ -1576,6 +1600,9 @@ Grammar EBNFParser::Parse(
     builder_.UpdateMaxChars(rule.name, rule.max_chars);
     builder_.UpdateCaptureName(rule.name, rule.capture_name);
     builder_.UpdateSuffixStopInfo(rule.name, parsed_rule.suffix_stop_info);
+    if (parsed_rule.object_key_info) {
+      builder_.UpdateObjectKeyInfo(builder_.GetRuleId(rule.name), *parsed_rule.object_key_info);
+    }
     builder_.UpdateLazy(rule.name, rule.is_lazy);
     builder_.UpdateRuleTemperature(builder_.GetRuleId(rule.name), rule.temperature);
   }

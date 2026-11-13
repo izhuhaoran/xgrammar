@@ -78,6 +78,9 @@ class EBNFLexer {
     bool is_lazy = false;
     // The sampling temperature attached to a rule-definition identifier via name[temperature=T].
     std::optional<float> temperature = std::nullopt;
+    bool object_keys = false;
+    int32_t object_key_codec = 0;
+    std::optional<std::string> object_key = std::nullopt;
   };
 
   EBNFLexer();

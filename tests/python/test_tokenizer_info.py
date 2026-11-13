@@ -1,3 +1,4 @@
+import json
 import logging
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -305,6 +306,14 @@ def test_model_vocab_size_smaller_than_tokenizer(tokenizer_path: str, model_voca
     assert len(tokenizer_info.decoded_vocab) == model_vocab_size
     print(tokenizer_info.special_token_ids)
     print(len(tokenizer_info.decoded_vocab))
+
+
+def test_token_subtree_ranges_exclude_nonprefix_substrings():
+    info = xgr.TokenizerInfo(["a", "aa", "aba", "baa", "baax", "baaz", "zaa"], stop_token_ids=[])
+    serialized = json.loads(info.serialize_json())
+    # A later token may contain a name in its middle or suffix without belonging
+    # to that name's prefix subtree. True extensions still share a range.
+    assert serialized["trie_subtree_nodes_range"] == [3, 2, 3, 6, 5, 6, 7]
 
 
 def test_tokenizer_info_vocab_size_smaller_than_vocab_raises():

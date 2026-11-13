@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -511,6 +512,7 @@ class GrammarMatcher::Impl : public EarleyParser {
   }
 
   bool AcceptToken(int32_t token_id, bool debug_print = false);
+  bool AcceptTokenImpl(int32_t token_id, bool debug_print);
 
   bool AcceptString(const std::string& input_str, bool debug_print = false);
 
@@ -641,6 +643,15 @@ class GrammarMatcher::Impl : public EarleyParser {
   );
 
   bool AdvanceWithCharacterBudget(uint8_t byte, bool debug_print = false);
+
+  bool AdvanceAtomicToken(int32_t token_id, bool debug_print = false, int32_t chars = 0) {
+    const std::string* bytes = nullptr;
+    if (has_object_keys_) {
+      const auto& vocab = tokenizer_info_.GetDecodedVocab();
+      if (token_id >= 0 && token_id < static_cast<int32_t>(vocab.size())) bytes = &vocab[token_id];
+    }
+    return EarleyParser::AdvanceAtomicToken(token_id, debug_print, chars, bytes);
+  }
 
   bool AdvanceAtomicTokenWithCharacterBudget(
       int32_t token_id, int32_t token_char_count, bool debug_print = false
@@ -947,7 +958,7 @@ bool GrammarMatcher::Impl::ApplyBudgetEnforcement(bool debug_print) {
   const auto latest_row = scanable_state_history_[scanable_state_history_.size() - 1];
   std::vector<ParserState> latest_states(latest_row.begin(), latest_row.end());
   std::vector<ParserState> force_completed_states;
-  std::unordered_set<int64_t> force_completed_occurrences;
+  std::unordered_set<std::tuple<int32_t, int32_t, int32_t>> force_completed_occurrences;
 
   tmp_states_visited_in_queue_.Clear();
   tmp_states_to_be_added_.clear();
@@ -962,8 +973,8 @@ bool GrammarMatcher::Impl::ApplyBudgetEnforcement(bool debug_print) {
     if (!CanForceCompleteWithoutMarker(state, false)) {
       continue;
     }
-    int64_t occurrence =
-        (static_cast<int64_t>(state.rule_id) << 32) | static_cast<uint32_t>(state.rule_start_pos);
+    const auto occurrence =
+        std::make_tuple(state.rule_id, state.rule_start_pos, state.object_key_context);
     if (force_completed_occurrences.insert(occurrence).second) {
       force_completed_states.push_back(state);
     }
@@ -1016,6 +1027,7 @@ bool GrammarMatcher::Impl::ApplyBudgetEnforcement(bool debug_print) {
   }
   scanable_state_history_.PopBack(1);
   scanable_state_history_.PushBack(tmp_states_to_be_added_);
+  RecordObjectKeyRow();
   is_completed_.back() = tmp_accept_stop_token_;
   return true;
 }
@@ -1034,7 +1046,7 @@ bool GrammarMatcher::Impl::ApplyCharacterBudgetEnforcement(bool debug_print) {
     previous_capture_events = CopyLastCaptureRow();
   }
   std::vector<ParserState> force_completed_states;
-  std::unordered_set<int64_t> force_completed_occurrences;
+  std::unordered_set<std::tuple<int32_t, int32_t, int32_t>> force_completed_occurrences;
 
   tmp_states_visited_in_queue_.Clear();
   tmp_states_to_be_added_.clear();
@@ -1049,8 +1061,8 @@ bool GrammarMatcher::Impl::ApplyCharacterBudgetEnforcement(bool debug_print) {
     if (!CanForceCompleteWithoutMarker(state, true)) {
       continue;
     }
-    int64_t occurrence =
-        (static_cast<int64_t>(state.rule_id) << 32) | static_cast<uint32_t>(state.rule_start_pos);
+    const auto occurrence =
+        std::make_tuple(state.rule_id, state.rule_start_pos, state.object_key_context);
     if (force_completed_occurrences.insert(occurrence).second) {
       force_completed_states.push_back(state);
     }
@@ -1106,6 +1118,7 @@ bool GrammarMatcher::Impl::ApplyCharacterBudgetEnforcement(bool debug_print) {
   }
   scanable_state_history_.PopBack(1);
   scanable_state_history_.PushBack(tmp_states_to_be_added_);
+  RecordObjectKeyRow();
   is_completed_.back() = tmp_accept_stop_token_;
   return true;
 }
@@ -1167,6 +1180,7 @@ bool GrammarMatcher::Impl::AdvanceWithCharacterBudget(uint8_t byte, bool debug_p
   if (!accepted && enforced) {
     scanable_state_history_.PopBack(1);
     scanable_state_history_.PushBack(previous_states);
+    RecordObjectKeyRow();
     rule_id_to_completable_states_.PopBack(1);
     rule_id_to_completable_states_.PushBack(previous_completable_states);
     is_completed_.back() = previous_completed;
@@ -1218,6 +1232,7 @@ bool GrammarMatcher::Impl::AdvanceAtomicTokenWithCharacterBudget(
   if (!accepted && enforced) {
     scanable_state_history_.PopBack(1);
     scanable_state_history_.PushBack(previous_states);
+    RecordObjectKeyRow();
     rule_id_to_completable_states_.PopBack(1);
     rule_id_to_completable_states_.PushBack(previous_completable_states);
     is_completed_.back() = previous_completed;
@@ -1259,6 +1274,16 @@ std::optional<float> GrammarMatcher::Impl::GetTemperature() const {
 
 // TODO(yixin): Polish verbose logging
 bool GrammarMatcher::Impl::AcceptToken(int32_t token_id, bool debug_print) {
+  if (!object_key_contexts_) return AcceptTokenImpl(token_id, debug_print);
+  // Atomic and byte trials can both contribute states. Keep both sets of IDs
+  // alive until their rows have been combined, or the rejected token rolled back.
+  const auto transaction = object_key_contexts_->BeginTransaction();
+  bool accepted = AcceptTokenImpl(token_id, debug_print);
+  object_key_contexts_->EndTransaction(transaction, accepted, scanable_state_history_.size() - 1);
+  return accepted;
+}
+
+bool GrammarMatcher::Impl::AcceptTokenImpl(int32_t token_id, bool debug_print) {
   if (IsStopTokenAccepted()) {
     XGRAMMAR_LOG(WARNING) << "The matcher has terminated after accepting the stop token, but is "
                           << "trying to accept new token with id " << token_id << ".";
@@ -1386,6 +1411,7 @@ bool GrammarMatcher::Impl::AcceptToken(int32_t token_id, bool debug_print) {
     }
     scanable_state_history_.PopBack(1);
     scanable_state_history_.PushBack(states_before_token);
+    RecordObjectKeyRow();
     rule_id_to_completable_states_.PopBack(1);
     rule_id_to_completable_states_.PushBack(completable_before_token);
     is_completed_.back() = completed_before_token;
@@ -1493,6 +1519,7 @@ bool GrammarMatcher::Impl::AcceptToken(int32_t token_id, bool debug_print) {
     if (token.empty()) {
       // Zero-length token: byte path created 0 timepoints, just push atomic states
       scanable_state_history_.PushBack(atomic_states);
+      RecordObjectKeyRow();
       rule_id_to_completable_states_.PushBack(atomic_completable);
       is_completed_.push_back(atomic_completed);
       PushCaptureRow(atomic_capture_row);
@@ -1502,6 +1529,61 @@ bool GrammarMatcher::Impl::AcceptToken(int32_t token_id, bool debug_print) {
         AppendAtomicRow(token);
       }
     } else {
+      // Object occurrences predicted by the atomic closure need their after-token
+      // row moved to the final byte row. Preserve ordinary dispatch caller rows,
+      // including when an unrelated grammar branch has object-key metadata.
+      const int32_t merged_row = rule_id_to_completable_states_.size() - 1;
+      if (object_key_contexts_ && merged_row != size_before_token) {
+        // Keep ctx=0 wrappers on the actual object call chain. A global rule
+        // reachability test would also move unrelated dispatch branches.
+        std::vector<std::pair<int32_t, int32_t>> object_callers;
+        auto mark_caller = [&](const ParserState& state) {
+          if (state.rule_start_pos != size_before_token) return false;
+          const auto key = std::make_pair(state.rule_id, state.object_key_context);
+          if (std::find(object_callers.begin(), object_callers.end(), key) !=
+              object_callers.end()) {
+            return false;
+          }
+          object_callers.push_back(key);
+          return true;
+        };
+        for (const auto& state : atomic_states) {
+          if (state.object_key_context != 0) mark_caller(state);
+        }
+        for (const auto& [ref_id, state] : atomic_completable) {
+          if (state.object_key_context != 0 || grammar_->GetObjectKeyInfo(ref_id) != nullptr) {
+            mark_caller(state);
+          }
+        }
+        bool changed = true;
+        while (changed) {
+          changed = false;
+          for (const auto& [ref_id, state] : atomic_completable) {
+            if (state.rule_start_pos != size_before_token) continue;
+            const bool related =
+                std::any_of(object_callers.begin(), object_callers.end(), [&](const auto& child) {
+                  return child.first == ref_id &&
+                         object_key_contexts_->CanReturn(child.second, state.object_key_context);
+                });
+            if (related) changed = mark_caller(state) || changed;
+          }
+        }
+        // Determine the chain before rebasing any context IDs: CanReturn above
+        // compares the original child entry with the original caller context.
+        auto rebase_state = [&](ParserState& state) {
+          const auto key = std::make_pair(state.rule_id, state.object_key_context);
+          if (state.rule_start_pos == size_before_token &&
+              std::find(object_callers.begin(), object_callers.end(), key) !=
+                  object_callers.end()) {
+            state.rule_start_pos = merged_row;
+          }
+          state.object_key_context = object_key_contexts_->RebaseRow(
+              state.object_key_context, size_before_token, merged_row
+          );
+        };
+        for (auto& state : atomic_states) rebase_state(state);
+        for (auto& caller : atomic_completable) rebase_state(caller.second);
+      }
       auto byte_states = GetLatestScanableStates();
       std::vector<ParserState> merged = byte_states;
       StateEqualForParsing state_eq;
@@ -1574,6 +1656,8 @@ bool GrammarMatcher::Impl::AcceptToken(int32_t token_id, bool debug_print) {
       }
 
       scanable_state_history_.PushBack(merged);
+
+      RecordObjectKeyRow();
       rule_id_to_completable_states_.PushBack(merged_completable);
       is_completed_.push_back(byte_completed || atomic_completed);
       PushCaptureRow(merged_capture_row);
@@ -1650,6 +1734,7 @@ bool GrammarMatcher::Impl::AcceptString(const std::string& input_str, bool debug
       if (has_char_budget_rules_) {
         scanable_state_history_.PopBack(1);
         scanable_state_history_.PushBack(states_before_input);
+        RecordObjectKeyRow();
         rule_id_to_completable_states_.PopBack(1);
         rule_id_to_completable_states_.PushBack(completable_before_input);
         is_completed_.back() = completed_before_input;
@@ -2031,7 +2116,22 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
         for (const auto& [num_repetitions, token_id] : adaptive_token_mask.repeat_exit_tokens) {
           if (num_repetitions <= budget &&
               parent_state.repeat_count + num_repetitions >= info->Lower()) {
-            tmp_accepted_bitset_.Set(token_id, true);
+            bool accepted = true;
+            if (state.object_key_context < 0) {
+              // A final quote can complete a dynamic key. Count bounds alone
+              // cannot decide whether its decoded name has already appeared.
+              PushOneStateToCheck(state);
+              int32_t advanced = 0;
+              for (uint8_t byte : tokenizer_info_.GetDecodedVocab()[token_id]) {
+                if (!Advance(byte)) {
+                  accepted = false;
+                  break;
+                }
+                ++advanced;
+              }
+              PopLastStates(advanced + 1);
+            }
+            if (accepted) tmp_accepted_bitset_.Set(token_id, true);
           }
         }
       }
@@ -2049,6 +2149,19 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
   const auto& token_char_counts = tokenizer_info_.ImplPtr()->GetTokenCharCounts();
   for (const auto& [state, adaptive_token_mask_pointer] : latest_states_with_masks) {
     const auto& adaptive_token_mask = *adaptive_token_mask_pointer;
+    bool may_retry_atomically = has_char_budget_rules_;
+    if (has_object_keys_ && !may_retry_atomically && grammar_->has_token_edges &&
+        !adaptive_token_mask.uncertain_indices.empty()) {
+      // The retry starts from this leaf alone. Without character-budget enforcement,
+      // only a token edge here can advance it; other leaves cannot help.
+      const auto& fsm = grammar_->per_rule_fsms[state.rule_id]->GetFsm().GetFsm();
+      for (const auto& edge : fsm.GetEdges(state.element_id)) {
+        if (edge.IsToken() || edge.IsExcludeToken()) {
+          may_retry_atomically = true;
+          break;
+        }
+      }
+    }
 
     // For each ParserState, we will check every uncertain token and put them into the accepted or
     // rejected list.
@@ -2061,17 +2174,10 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
 
     tmp_rejected_indices_delta_.clear();
 
-    // Examine only the current one ParserState
-    PushOneStateToCheck(state);
+    bool replay_started = false;
     bool track_temporary_input = has_char_budget_rules_ && has_budget_marker_rules_;
     int32_t saved_temporary_input_start_row = -1;
     std::string saved_temporary_input_bytes;
-    if (track_temporary_input) {
-      saved_temporary_input_start_row = temporary_input_start_row_;
-      saved_temporary_input_bytes = std::move(temporary_input_bytes_);
-      temporary_input_start_row_ = scanable_state_history_.size() - 1;
-      temporary_input_bytes_.clear();
-    }
 
     const std::string* prev_token = nullptr;
     int prev_matched_size = 0;
@@ -2086,6 +2192,18 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
       // Check if the current token is already accepted. If it is, we can skip it.
       if (tmp_accepted_bitset_[sorted_decoded_vocab[cur_token_idx].first]) {
         continue;
+      }
+      if (!replay_started) {
+        // Empty uncertainty lists, or candidates already accepted by another
+        // leaf, do not need a speculative parser row.
+        PushOneStateToCheck(state);
+        replay_started = true;
+        if (track_temporary_input) {
+          saved_temporary_input_start_row = temporary_input_start_row_;
+          saved_temporary_input_bytes = std::move(temporary_input_bytes_);
+          temporary_input_start_row_ = scanable_state_history_.size() - 1;
+          temporary_input_bytes_.clear();
+        }
       }
 
       // Check if the current token is in the rejected range. i.e. check if the current token
@@ -2158,7 +2276,7 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
       }
 
       bool retried_atomically = false;
-      if (!accepted && has_char_budget_rules_ && grammar_->has_token_edges) {
+      if (!accepted && may_retry_atomically && grammar_->has_token_edges) {
         // Retry through Token/ExcludeToken edges in place: rebuild the single-state row, run the
         // atomic path, then rebuild it again so trial-time enforcement does not leak. A full
         // matcher copy here made every mask O(generated length).
@@ -2201,10 +2319,12 @@ void GrammarMatcher::Impl::FillBitmaskForStates(
       prev_token = retried_atomically ? nullptr : &cur_token;
     }
 
-    PopLastStates(prev_matched_size + 1);
-    if (track_temporary_input) {
-      temporary_input_start_row_ = saved_temporary_input_start_row;
-      temporary_input_bytes_ = std::move(saved_temporary_input_bytes);
+    if (replay_started) {
+      PopLastStates(prev_matched_size + 1);
+      if (track_temporary_input) {
+        temporary_input_start_row_ = saved_temporary_input_start_row;
+        temporary_input_bytes_ = std::move(saved_temporary_input_bytes);
+      }
     }
     // Step 3. Update the accepted_indices or rejected_indices
     if (adaptive_token_mask.store_type == StoreType::kRejected) {

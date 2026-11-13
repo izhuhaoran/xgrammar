@@ -3683,14 +3683,14 @@ def test_any_order_ebnf():
         ('{"b": "x", "a": 1}', True),  # reordered required
         (
             '{"a": 1, "a": 2}',
-            True,
-        ),  # duplicate required, b missing -> only the count (2) is enforced
+            False,
+        ),  # duplicate key is rejected independently of required enforcement
         ('{"a": 1, "b": "x", "c": true}', True),  # with optional
         ('{"b": "x", "a": 1, "c": true}', True),  # reordered required + optional
         ('{"c": true, "a": 1, "b": "x"}', True),  # optional fully interleaved before required
         ('{"a": 1, "c": true, "b": "x"}', True),  # optional between the two required entries
         ('{"a": 1}', False),  # only one required entry
-        ('{"a": 1, "b": "x", "c": true, "c": false}', True),  # other entries are not count-limited
+        ('{"a": 1, "b": "x", "c": true, "c": false}', False),  # duplicate optional key
         ('{"a": 1, "b": "x", "d": 5}', False),  # additionalProperties false
         ("{}", False),  # required present -> not empty
     ],
@@ -3728,7 +3728,7 @@ def test_any_order_pattern_properties_unbounded():
         "additionalProperties": False,
     }
     _accept_any_order(schema, '{"a": 1}', True)
-    _accept_any_order(schema, '{"a": 1, "x_": 5, "x_": 9}', True)  # pattern keys, unbounded
+    _accept_any_order(schema, '{"a": 1, "x_": 5, "x_": 9}', False)  # duplicate dynamic key
 
 
 def test_any_order_applies_to_nested_objects():
@@ -3761,7 +3761,7 @@ def test_any_order_no_required_fields():
     _accept_any_order(schema, "{}", True)  # empty allowed
     _accept_any_order(schema, '{"b": "x"}', True)
     _accept_any_order(schema, '{"b": "x", "a": 1}', True)
-    _accept_any_order(schema, '{"a": 1, "a": 2, "b": "x"}', True)  # unbounded, no count limit
+    _accept_any_order(schema, '{"a": 1, "a": 2, "b": "x"}', False)  # duplicate key
 
 
 def test_any_order_min_max_properties():

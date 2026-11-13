@@ -74,6 +74,9 @@ std::string GrammarPrinter::PrintRule(
         append_attribute("object_key_raw");
       else
         append_attribute("object_key=\"" + EscapeString(object_key_info->key) + "\"");
+      for (const auto& name : object_key_info->required) {
+        append_attribute("object_required=\"" + EscapeString(name) + "\"");
+      }
     }
     if (rule.temperature.has_value()) {
       std::ostringstream temperature;

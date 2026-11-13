@@ -189,6 +189,7 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
     bool has_object_key = false;
     int32_t object_key_codec = 0;
     std::string object_key;
+    std::vector<std::string> object_required;
     double temperature_value = 0;
     int64_t max_tokens_value = -1;
     int64_t max_chars_value = -1;
@@ -306,6 +307,10 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
         object_key_codec = 2;
       } else if (!has_object_keys && match_keyword("object_keys")) {
         has_object_keys = true;
+      } else if (match_keyword("object_required")) {
+        std::string name;
+        matched = parse_string_value(&name);
+        if (matched) object_required.push_back(std::move(name));
       } else if (!has_object_key && match_keyword("object_key")) {
         has_object_key = true;
         matched = parse_string_value(&object_key);
@@ -396,6 +401,7 @@ EBNFLexer::Token EBNFLexer::Impl::ParseIdentifierOrBooleanToken() {
       token.is_lazy = has_lazy;
       token.object_keys = has_object_keys;
       token.object_key_codec = object_key_codec;
+      token.object_required = std::move(object_required);
       if (has_object_key) token.object_key = std::move(object_key);
       if (has_temperature) {
         token.temperature = static_cast<float>(temperature_value);
@@ -1529,6 +1535,7 @@ EBNFParser::ParsedRule EBNFParser::ParseRule() {
   const bool object_keys = Peek().object_keys;
   const int32_t object_key_codec = Peek().object_key_codec;
   const auto object_key = Peek().object_key;
+  const auto object_required = Peek().object_required;
   Consume();
 
   PeekAndConsume(TokenType::Assign, "Expect ::=");
@@ -1548,8 +1555,9 @@ EBNFParser::ParsedRule EBNFParser::ParseRule() {
   result.rule.is_lazy = is_lazy;
   result.rule.temperature = temperature;
   if (object_keys || object_key.has_value() || object_key_codec != 0) {
-    result.object_key_info =
-        Grammar::Impl::ObjectKeyInfo{-1, object_keys, object_key.value_or(""), object_key_codec};
+    result.object_key_info = Grammar::Impl::ObjectKeyInfo{
+        -1, object_keys, object_key.value_or(""), object_key_codec, object_required
+    };
   }
   result.suffix_stop_info.hidden_suffix_bytes = capture_hidden_suffix_bytes;
   result.suffix_stop_info.hidden_stop_bytes = capture_hidden_stop_bytes;

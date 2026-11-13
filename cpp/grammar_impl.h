@@ -128,6 +128,9 @@ class Grammar::Impl {
     bool object = false;
     std::string key;
     int32_t key_codec = 0;  // 0: declared key; 1: JSON-encoded dynamic key; 2: raw key.
+    // Only effective closed objects enforce required identity. Open objects
+    // retain the converter's existing property-count behavior.
+    std::vector<std::string> required = {};
   };
 
   const ObjectKeyInfo* GetObjectKeyInfo(int32_t rule_id) const {
@@ -140,6 +143,7 @@ class Grammar::Impl {
     return it != object_key_infos_.end() && it->rule_id == rule_id ? &*it : nullptr;
   }
   bool HasObjectKeys() const { return !object_key_infos_.empty(); }
+  const std::vector<ObjectKeyInfo>& GetObjectKeyInfos() const { return object_key_infos_; }
 
   /*! \brief Get the number of rules. */
   int32_t NumRules() const { return rules_.size(); }
@@ -494,7 +498,8 @@ XGRAMMAR_MEMBER_ARRAY(
     &Grammar::Impl::ObjectKeyInfo::rule_id,
     &Grammar::Impl::ObjectKeyInfo::object,
     &Grammar::Impl::ObjectKeyInfo::key,
-    &Grammar::Impl::ObjectKeyInfo::key_codec
+    &Grammar::Impl::ObjectKeyInfo::key_codec,
+    &Grammar::Impl::ObjectKeyInfo::required
 );
 
 XGRAMMAR_MEMBER_TABLE(

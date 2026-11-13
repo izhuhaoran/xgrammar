@@ -61,8 +61,9 @@ class JSONSchemaFormat(BaseModel):
       keys present, no duplicates).
     - True: properties may appear in any order, and duplicate logical names are rejected.
       JSON key escapes are decoded for this comparison; names are not Unicode-normalized.
-      Required-key identity is not checked, so required keys may be missing. Existing
-      property-count checks, including minProperties and maxProperties, continue to apply.
+      Effective closed objects must contain every required name. Open objects retain the
+      existing count-based required behavior. The existing minProperties/maxProperties
+      constraints continue to apply.
 
     Applies to every object, nested included."""
     max_whitespace_cnt: Optional[int] = None

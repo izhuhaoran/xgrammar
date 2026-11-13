@@ -3651,8 +3651,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashFsm(int fsm_index, bool allow_
                                    int32_t target,
                                    std::optional<std::pair<int32_t, int32_t>> bounds) {
       auto with_bounds = [&](uint64_t hash) {
-        if ((*grammar_)->GetObjectKeyInfo(ref_rule_id))
-          hash = HashCombineMixed(hash, kObjectKeyFlag);
+        if (const auto* info = (*grammar_)->GetObjectKeyInfo(ref_rule_id))
+          hash = HashCombineMixed(hash, kObjectKeyFlag, !info->required.empty());
         return bounds.has_value() ? HashCombineMixed(hash, bounds->first, bounds->second) : hash;
       };
       if (ref_rule_id == fsm_index) {
@@ -3750,8 +3750,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashFsm(int fsm_index, bool allow_
     new_id_mapping.emplace_back(original_state_id, new_state_id);
   }
   grammar_->ImplPtr()->per_rule_fsm_new_state_ids[fsm_index] = new_id_mapping;
-  if ((*grammar_)->GetObjectKeyInfo(fsm_index))
-    hash_result = HashCombineMixed(hash_result, kObjectKeyFlag);
+  if (const auto* info = (*grammar_)->GetObjectKeyInfo(fsm_index))
+    hash_result = HashCombineMixed(hash_result, kObjectKeyFlag, !info->required.empty());
   // A lazy rule has other token masks than the same fsm without it.
   if ((*grammar_)->GetRule(fsm_index).is_lazy) {
     hash_result = HashCombineMixed(hash_result, kLazyFlag);

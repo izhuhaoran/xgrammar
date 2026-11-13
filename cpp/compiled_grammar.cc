@@ -363,7 +363,9 @@ std::vector<uint8_t> FindObjectKeyCompletionRules(const Grammar& grammar) {
   }
   for (int rule = 0; rule < grammar->NumRules(); ++rule) {
     const auto* info = grammar->GetObjectKeyInfo(rule);
-    if (info && !info->object) {
+    if (info && info->object && !info->required.empty()) {
+      mark_rule(rule, kCheckObjectContext);
+    } else if (info && !info->object) {
       if (info->key_codec != 0)
         mark_rule(rule, kFinishDynamicKey);
       else if (changes_keys[rule])

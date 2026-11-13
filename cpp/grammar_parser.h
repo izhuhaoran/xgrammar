@@ -81,6 +81,7 @@ class EBNFLexer {
     bool object_keys = false;
     int32_t object_key_codec = 0;
     std::optional<std::string> object_key = std::nullopt;
+    std::vector<std::string> object_required = {};
   };
 
   EBNFLexer();

@@ -168,14 +168,17 @@ void EarleyParser::Complete(const ParserState& input, bool debug_print, bool mar
       } else if (object_key_codes_[state.rule_id] <= -3) {
         state.object_key_context = object_key_contexts_->CompleteKey(state.object_key_context);
         if (state.object_key_context == ObjectKeyContext::kRejected) return;
+      } else if (object_key_codes_[state.rule_id] == -2 &&
+                 !object_key_contexts_->ObjectComplete(state.object_key_context)) {
+        return;
       }
     } else if (const auto* info = grammar_->GetObjectKeyInfo(state.rule_id);
-               info && !info->object &&
+               info && (!info->object || !info->required.empty()) &&
                (state.rule_start_pos != ParserState::kNoPrevInputPos ||
                 (info->key_codec != 0 && state.object_key_context < 0 &&
                  grammar_->GetRule(state.rule_id).is_lazy))) {
-      // A key guard may reject this short lazy match and leave a longer match alive.
-      // Cache construction has no seen set, including at its completion-sensitive root.
+      // Completion can depend on the runtime key set. A guarded lazy key may
+      // reject a short match, so its cache must keep longer matches alive.
       tmp_object_key_check_entered_ = true;
       defer_lazy_commit = info->key_codec != 0;
     }
@@ -574,6 +577,9 @@ EarleyParser::EarleyParser(const Grammar& grammar, std::optional<ParserState> in
       else
         object_key_codes_[rule] = object_key_contexts_->InternKey(info->key);
     }
+    for (const auto& info : grammar_->GetObjectKeyInfos()) {
+      if (info.object) object_key_contexts_->SetRequired(info.rule_id, info.required);
+    }
   }
   for (int32_t i = 0; i < grammar_->NumRules(); ++i) {
     has_budget_rules_ = has_budget_rules_ || grammar_->GetRule(i).max_tokens >= 0;
@@ -705,6 +711,9 @@ void EarleyParser::Reset() {
         const int32_t name = object_key_contexts_->InternKey(grammar_->GetObjectKeyInfo(rule)->key);
         XGRAMMAR_DCHECK(name == object_key_codes_[rule]);
       }
+    }
+    for (const auto& info : grammar_->GetObjectKeyInfos()) {
+      if (info.object) object_key_contexts_->SetRequired(info.rule_id, info.required);
     }
   }
   object_key_check_history_.clear();

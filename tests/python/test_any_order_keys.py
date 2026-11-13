@@ -305,7 +305,7 @@ def test_any_order_distinct_prefixes_unicode_and_scope(dynamic):
         check_path(compiled, info, [token, info.vocab_size - 1], expected)
 
 
-def test_any_order_missing_required_stays_a_separate_step():
+def test_any_order_missing_required_cannot_be_replaced_by_optional_keys():
     schema = {
         "type": "object",
         "properties": {k: {"type": "integer"} for k in "abcd"},
@@ -314,7 +314,7 @@ def test_any_order_missing_required_stays_a_separate_step():
     }
     text = '{"c":3,"d":4}'
     compiled, info = compile_object(schema, [text])
-    check_path(compiled, info, [256, info.vocab_size - 1], True)
+    check_path(compiled, info, [256, info.vocab_size - 1], False)
 
 
 def test_any_order_duplicate_rejection_does_not_commit_state():

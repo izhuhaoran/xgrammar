@@ -224,7 +224,9 @@ Use a non-JSON style only when the surrounding model format expects it:
 
 By default (`"any_order": false`) properties must appear in their declared order and are fully validated (no duplicate keys, all required keys present). With `"any_order": true`, any property (**required**, **optional**, or **additional** / **pattern**) may appear in any position. Each entry must have a permitted key and a value matching that key's schema. Duplicate logical names are rejected within each object occurrence. JSON key escapes are decoded for this comparison without Unicode normalization; other renderers follow their existing key encoding.
 
-Required key presence retains its existing count-based behavior and may be incomplete. Existing property-count checks, including `minProperties` and `maxProperties`, continue to apply. For example, an object declaring `a`, `b`, `c`, and `d`, with `required: ["a", "b"]` and `additionalProperties: false`, can still accept `{"c": 3, "d": 4}`: there are two distinct permitted keys, but the required names are absent. It rejects `{"a": 1, "a": 2}` because `a` is repeated. These rules apply to every object, including nested ones.
+An effective closed object must contain every required name before it can end. This follows the converter's existing resolution of additional properties, including strict/default settings. For example, an object declaring `a`, `b`, `c`, and `d`, with `required: ["a", "b"]` and `additionalProperties: false`, rejects `{"c": 3, "d": 4}` because both required names are absent. It accepts `{"b": 2, "a": 1}` and rejects `{"a": 1, "a": 2}`.
+
+Open objects retain the existing count-based required behavior without checking which required names are present. Existing property-count checks, including `minProperties` and `maxProperties`, continue to apply. These rules apply to nested objects as well.
 
 ```json
 {

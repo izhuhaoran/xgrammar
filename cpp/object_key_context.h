@@ -27,8 +27,8 @@ namespace xgrammar {
  * Earley derivations equal. Speculative rows roll back their allocations.
  */
 class ObjectKeyContext {
-  enum ScopeField { kOuter, kRule, kStart, kSeen, kPrefix, kCodec, kName, kTail };
-  using Scope = std::array<int32_t, 8>;
+  enum ScopeField { kOuter, kRule, kStart, kSeen, kPrefix, kCodec, kName, kTail, kRemaining };
+  using Scope = std::array<int32_t, 9>;
   template <size_t N>
   class Table {
     using Value = std::array<int32_t, N>;
@@ -66,9 +66,10 @@ class ObjectKeyContext {
   // The entry identity
   // prevents a completion from returning through an unrelated Earley branch.
   Table<2> sets_;
-  Table<8> scopes_;
+  Table<9> scopes_;
   Table<2> states_;
   Table<2> prefixes_;
+  std::unordered_map<int32_t, std::vector<int32_t>> required_;
 
   static int32_t StateId(int32_t state) { return state < 0 ? ~state : state; }
   int32_t State(int32_t current, int32_t entry) {
@@ -123,13 +124,17 @@ class ObjectKeyContext {
     if (HasSeen(scope, key)) return kRejected;
     MaterializeTail(&scope);
     scope[kTail] = key;
+    if (scope[kRemaining] > 0) {
+      const auto& names = required_.at(scope[kRule]);
+      if (std::binary_search(names.begin(), names.end(), key)) --scope[kRemaining];
+    }
     return State(scopes_.Intern(scope), pair[1]);
   }
 
  public:
   ObjectKeyContext() {
     sets_.Intern({0, 0});
-    scopes_.Intern({0, -1, -1, 0, -1, 0, 0, -1});
+    scopes_.Intern({0, -1, -1, 0, -1, 0, 0, -1, 0});
     states_.Intern({0, 0});
     prefixes_.Intern({-1, 0});
     checkpoints_.push_back({0, Save()});
@@ -178,6 +183,16 @@ class ObjectKeyContext {
     for (uint8_t byte : key) prefix = prefixes_.Intern({prefix, byte});
     return prefix;
   }
+  void SetRequired(int32_t rule, const std::vector<std::string>& names) {
+    if (names.empty()) return;
+    auto& keys = required_[rule];
+    for (const auto& name : names) keys.push_back(InternKey(name));
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+  }
+  bool ObjectComplete(int32_t state) const {
+    return scopes_[states_[StateId(state)][0]][kRemaining] == 0;
+  }
 
   int32_t Enter(int32_t parent, int32_t rule, int32_t start, bool object, int32_t key) {
     const auto parent_pair = states_[StateId(parent)];
@@ -185,7 +200,9 @@ class ObjectKeyContext {
     if (!object && key == -1 && entry == parent_pair[1]) return parent;
     int32_t current = entry;
     if (object) {
-      current = scopes_.Intern({entry, rule, start, 0, -1, 0, 0, -1});
+      const auto found = required_.find(rule);
+      const int32_t remaining = found == required_.end() ? 0 : found->second.size();
+      current = scopes_.Intern({entry, rule, start, 0, -1, 0, 0, -1, remaining});
     } else if (key >= 0 && current != 0) {
       auto scope = scopes_[current];
       if (HasSeen(scope, key)) return kRejected;

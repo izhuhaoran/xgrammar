@@ -3519,7 +3519,12 @@ int32_t JSONSchemaConverter::GenerateObject(
   }
   if (any_order_) {
     const int32_t object_rule = builder_.AddRuleWithHint(rule_name + "_keys", result);
-    builder_.UpdateObjectKeyInfo(object_rule, {-1, true, {}});
+    Grammar::Impl::ObjectKeyInfo info{-1, true, {}};
+    if (!additional_property) {
+      for (const auto& name : spec.required) info.required.push_back(ObjectKeyIdentity(name));
+      std::sort(info.required.begin(), info.required.end());
+    }
+    builder_.UpdateObjectKeyInfo(object_rule, info);
     return RuleRef(object_rule);
   }
   return result;
